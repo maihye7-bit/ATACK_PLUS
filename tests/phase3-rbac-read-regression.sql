@@ -28,6 +28,9 @@ BEGIN
       ('purchase_amendments','purchases.read')
     ) AS x(table_name, permission_code)
   LOOP
+    IF NOT has_table_privilege('authenticated',format('public.%I',r.table_name),'SELECT') THEN
+      RAISE EXCEPTION 'authenticated lacks SELECT ACL on public.%',r.table_name;
+    END IF;
     IF NOT EXISTS (
       SELECT 1 FROM pg_policies
        WHERE schemaname='public' AND tablename=r.table_name
