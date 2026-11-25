@@ -351,7 +351,9 @@ DECLARE
  v_user UUID; v_replay BOOLEAN; v_id UUID:=(p_payload->>'id')::UUID;
  v_purchase UUID:=(p_payload->>'purchase_id')::UUID; v_reason TEXT:=NULLIF(btrim(p_payload->>'reason'),'');
  v_row JSONB; v_item UUID; v_qty NUMERIC(18,4); v_ordered NUMERIC(18,4);
- v_received NUMERIC(18,4); v_closed NUMERIC(18,4); v_closure UUID;
+ v_received NUMERIC(18,4); v_closed NUMERIC(18,4); v_closure UUID; v_price NUMERIC(18,4);
+ v_supplier UUID; v_supplier_debt NUMERIC(18,4); v_applied NUMERIC(18,4);
+ v_new_credit NUMERIC(18,4); v_closure_total NUMERIC(18,4):=0;
 BEGIN
  IF v_reason IS NULL THEN RAISE EXCEPTION 'A closure reason is required'; END IF;
  IF COALESCE(jsonb_typeof(p_payload->'items'),'')<>'array' OR jsonb_array_length(p_payload->'items')=0 THEN
@@ -360,7 +362,8 @@ BEGIN
  SELECT c.app_user_id,c.already_processed INTO v_user,v_replay FROM public._claim_business_operation(
    p_store_id,p_operation_id,'purchase_close_remaining',v_id,p_payload,'purchases.close_remaining') c;
  IF v_replay THEN RETURN jsonb_build_object('success',TRUE,'replayed',TRUE,'closure_id',v_id); END IF;
- PERFORM 1 FROM public.purchases WHERE id=v_purchase AND store_id=p_store_id AND status<>'CANCELLED' FOR UPDATE;
+ SELECT supplier_id INTO v_supplier FROM public.purchases
+  WHERE id=v_purchase AND store_id=p_store_id AND status<>'CANCELLED' FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'Purchase not found or cancelled'; END IF;
  INSERT INTO public.purchase_closures(id,store_id,purchase_id,operation_id,reason,closed_by)
  VALUES(v_id,p_store_id,v_purchase,p_operation_id,v_reason,v_user);
@@ -368,7 +371,8 @@ BEGIN
               ORDER BY e.value->>'purchase_item_id'
  LOOP
    v_item:=(v_row->>'purchase_item_id')::UUID; v_qty:=(v_row->>'quantity')::NUMERIC;
-   SELECT quantity,received_quantity,closed_quantity INTO v_ordered,v_received,v_closed
+   SELECT quantity,received_quantity,closed_quantity,unit_price
+     INTO v_ordered,v_received,v_closed,v_price
     FROM public.purchase_items WHERE id=v_item AND purchase_id=v_purchase FOR UPDATE;
    IF NOT FOUND THEN RAISE EXCEPTION 'Purchase item not found'; END IF;
    IF v_qty IS NULL OR v_qty<=0 OR v_qty>v_ordered-v_received-v_closed THEN
@@ -377,7 +381,31 @@ BEGIN
    UPDATE public.purchase_items SET closed_quantity=closed_quantity+v_qty WHERE id=v_item;
    INSERT INTO public.purchase_closure_items(store_id,closure_id,purchase_item_id,quantity,reason)
    VALUES(p_store_id,v_id,v_item,v_qty,COALESCE(NULLIF(v_row->>'reason',''),v_reason));
+   v_closure_total:=v_closure_total+(v_qty*v_price);
  END LOOP;
+
+ -- Closed, unreceived quantities are cancelled financially as well as operationally.
+ IF v_closure_total>0 THEN
+   UPDATE public.purchases SET subtotal=GREATEST(subtotal-v_closure_total,0),
+     total_amount=GREATEST(total_amount-v_closure_total,0),
+     remaining_amount=GREATEST(remaining_amount-v_closure_total,0),
+     status=CASE WHEN GREATEST(remaining_amount-v_closure_total,0)=0 THEN 'PAID'
+                 WHEN paid_amount>0 THEN 'PARTIAL' ELSE 'OPEN' END,
+     updated_at=NOW() WHERE id=v_purchase;
+   SELECT current_debt INTO v_supplier_debt FROM public.suppliers
+    WHERE id=v_supplier AND store_id=p_store_id FOR UPDATE;
+   v_applied:=LEAST(v_supplier_debt,v_closure_total);
+   v_new_credit:=v_closure_total-v_applied;
+   UPDATE public.suppliers SET current_debt=current_debt-v_applied,
+     credit_balance=credit_balance+v_new_credit,updated_at=NOW() WHERE id=v_supplier;
+   INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
+   SELECT v_supplier,'ADJUSTMENT',-v_closure_total,current_debt-credit_balance,v_id,
+     'Closed unreceived purchase quantity '||v_id::text,v_user
+    FROM public.suppliers WHERE id=v_supplier;
+   UPDATE public.purchase_closures SET financial_delta=-v_closure_total,
+     applied_to_debt=v_applied,supplier_credit_created=v_new_credit WHERE id=v_id;
+ END IF;
+
  UPDATE public.purchases p SET receiving_status=CASE
    WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.closed_quantity>0) THEN 'CLOSED_PARTIAL'
    WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id
