@@ -208,11 +208,15 @@ RESET ROLE;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000002',TRUE);
 SET LOCAL ROLE authenticated;
 DO $second_store_reads$
-DECLARE n INTEGER;
+DECLARE n INTEGER; v_store UUID;
 BEGIN
+  v_store:=public.current_user_store_id();
+  IF v_store IS DISTINCT FROM '10000000-0000-4000-8000-000000000002'::uuid THEN
+    RAISE EXCEPTION 'Second-store Auth identity resolved to store %, auth.uid %',v_store,auth.uid();
+  END IF;
   SELECT count(*) INTO n FROM public.stores;
   IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.stores WHERE id='10000000-0000-4000-8000-000000000002') THEN
-    RAISE EXCEPTION 'Second-store owner can see another store or cannot see its own';
+    RAISE EXCEPTION 'Second-store owner store visibility mismatch: count %, resolved store %, auth.uid %',n,v_store,auth.uid();
   END IF;
   SELECT count(*) INTO n FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000002';
   IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.users WHERE id='30000000-0000-4000-8000-000000000002') THEN
