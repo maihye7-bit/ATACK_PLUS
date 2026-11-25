@@ -138,6 +138,12 @@ BEGIN
   EXCEPTION WHEN raise_exception THEN denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Audit log DELETE was not blocked by append-only trigger'; END IF;
+  denied:=FALSE;
+  BEGIN
+    TRUNCATE TABLE public.audit_logs;
+  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  END;
+  IF NOT denied THEN RAISE EXCEPTION 'Audit log TRUNCATE was not blocked by append-only trigger'; END IF;
   RAISE NOTICE 'PASS: audit log is append-only even for privileged database roles';
 END
 $append_only$;
