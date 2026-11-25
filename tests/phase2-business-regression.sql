@@ -135,7 +135,9 @@ BEGIN
     v_result:=public.process_purchase_receipt(
       v_store,'60000000-0000-4000-8000-000000000005',
       jsonb_build_object('id','72000000-0000-4000-8000-000000000003','purchase_id',v_purchase,
-        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3)))
+        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'accepted_quantity',3,
+          'rejected_quantity',2,'rejection_reason','Damaged packaging',
+          'packaging_condition','TORN','photo_paths',jsonb_build_array('evidence/photo-1.jpg'))))
     );
     IF (v_result->>'replayed')::boolean IS DISTINCT FROM FALSE THEN RAISE EXCEPTION 'First receipt unexpectedly replayed'; END IF;
 
@@ -149,6 +151,12 @@ BEGIN
 
     SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
     IF v_qty IS DISTINCT FROM 17 THEN RAISE EXCEPTION 'Receipt replay duplicated stock or receipt stock mismatch: %',v_qty; END IF;
+    IF NOT EXISTS(SELECT 1 FROM public.purchase_receipt_items
+       WHERE receipt_id='72000000-0000-4000-8000-000000000003'
+         AND rejected_quantity=2 AND rejection_reason='Damaged packaging'
+         AND packaging_condition='TORN' AND jsonb_array_length(photo_paths)=1) THEN
+      RAISE EXCEPTION 'Rejected goods were not preserved in the receipt record';
+    END IF;
 
     -- Over-receipt must roll back without changing the received quantity or stock.
     BEGIN
@@ -298,3 +306,94 @@ BEGIN
     RAISE NOTICE 'PASS: sale return source-line cap, original price, customer credit, no cash payout, purchase received-quantity cap and supplier ledger';
 END
 $returns_regression$;
+
+-- D-054/D-056/D-057: authorized closure, approved excess, and explicit substitute.
+DO $receiving_extensions_test$
+DECLARE
+ v_store UUID:='10000000-0000-4000-8000-000000000001';
+ v_auth UUID:='20000000-0000-4000-8000-000000000001';
+ v_user UUID:='30000000-0000-4000-8000-000000000001';
+ v_supplier UUID:='40000000-0000-4000-8000-000000000001';
+ v_excess_product UUID:='50000000-0000-4000-8000-000000000003';
+ v_close_product UUID:='50000000-0000-4000-8000-000000000004';
+ v_original_product UUID:='50000000-0000-4000-8000-000000000005';
+ v_substitute_product UUID:='50000000-0000-4000-8000-000000000006';
+ v_result JSONB; v_stock NUMERIC(18,4); v_total NUMERIC(18,4);
+ v_received NUMERIC(18,4); v_excess NUMERIC(18,4); v_closed NUMERIC(18,4);
+ v_status TEXT; v_debt_before NUMERIC(18,4); v_debt_after NUMERIC(18,4);
+BEGIN
+ PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
+ INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active) VALUES
+  (v_excess_product,v_store,'Excess Receipt Product','pcs',0,TRUE),
+  (v_close_product,v_store,'Close Remaining Product','pcs',0,TRUE),
+  (v_original_product,v_store,'Original Ordered Product','pcs',0,TRUE),
+  (v_substitute_product,v_store,'Approved Substitute Product','pcs',0,TRUE);
+
+ -- D-056: the requested 5 and approved excess 2 are separately stored; both enter stock.
+ v_result:=public.process_purchase(v_store,'60000000-0000-4000-8000-000000000013',
+  jsonb_build_object('id','70000000-0000-4000-8000-000000000004',
+   'purchase_number','PH2-PUR-EXCESS','supplier_id',v_supplier,'paid_amount',0,
+   'items',jsonb_build_array(jsonb_build_object('id','71000000-0000-4000-8000-000000000004',
+    'product_id',v_excess_product,'quantity',5,'received_quantity',0,'unit_id','pcs',
+    'unit_price',20,'cost_per_unit',20))));
+ SELECT current_debt INTO v_debt_before FROM public.suppliers WHERE id=v_supplier;
+ v_result:=public.process_purchase_receipt(v_store,'60000000-0000-4000-8000-000000000014',
+  jsonb_build_object('id','73000000-0000-4000-8000-000000000004',
+   'purchase_id','70000000-0000-4000-8000-000000000004','approved_by',v_user,
+   'items',jsonb_build_array(jsonb_build_object('purchase_item_id','71000000-0000-4000-8000-000000000004',
+    'accepted_quantity',5,'excess_quantity',2,'excess_reason','Supplier delivered extra units'))));
+ SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_excess_product AND location_id='main';
+ SELECT received_quantity,excess_received_quantity INTO v_received,v_excess
+  FROM public.purchase_items WHERE id='71000000-0000-4000-8000-000000000004';
+ SELECT total_amount INTO v_total FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000004';
+ SELECT current_debt INTO v_debt_after FROM public.suppliers WHERE id=v_supplier;
+ IF v_stock IS DISTINCT FROM 7 OR v_received IS DISTINCT FROM 5 OR v_excess IS DISTINCT FROM 2
+    OR v_total IS DISTINCT FROM 140 OR v_debt_after-v_debt_before IS DISTINCT FROM 140 THEN
+   RAISE EXCEPTION 'Approved excess receipt mismatch: stock %, received %, excess %, total %, debt delta %',
+     v_stock,v_received,v_excess,v_total,v_debt_after-v_debt_before;
+ END IF;
+
+ -- D-054: close the remaining 3 of 5 after receiving 2; closed units never enter stock.
+ v_result:=public.process_purchase(v_store,'60000000-0000-4000-8000-000000000015',
+  jsonb_build_object('id','70000000-0000-4000-8000-000000000005',
+   'purchase_number','PH2-PUR-CLOSE','supplier_id',v_supplier,'paid_amount',0,
+   'items',jsonb_build_array(jsonb_build_object('id','71000000-0000-4000-8000-000000000005',
+    'product_id',v_close_product,'quantity',5,'received_quantity',2,'unit_id','pcs',
+    'unit_price',10,'cost_per_unit',10))));
+ v_result:=public.process_purchase_close_remaining(v_store,'60000000-0000-4000-8000-000000000016',
+  jsonb_build_object('id','74000000-0000-4000-8000-000000000005',
+   'purchase_id','70000000-0000-4000-8000-000000000005','reason','Supplier discontinued remaining units',
+   'items',jsonb_build_array(jsonb_build_object('purchase_item_id','71000000-0000-4000-8000-000000000005',
+    'quantity',3))));
+ SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_close_product AND location_id='main';
+ SELECT closed_quantity INTO v_closed FROM public.purchase_items WHERE id='71000000-0000-4000-8000-000000000005';
+ SELECT receiving_status INTO v_status FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000005';
+ IF v_stock IS DISTINCT FROM 2 OR v_closed IS DISTINCT FROM 3 OR v_status IS DISTINCT FROM 'CLOSED_PARTIAL'
+    OR NOT EXISTS(SELECT 1 FROM public.purchase_closure_items WHERE closure_id='74000000-0000-4000-8000-000000000005') THEN
+   RAISE EXCEPTION 'Close remaining mismatch: stock %, closed %, status %',v_stock,v_closed,v_status;
+ END IF;
+
+ -- D-057: explicit approved substitute updates only substitute stock and adjusts supplier value.
+ v_result:=public.process_purchase(v_store,'60000000-0000-4000-8000-000000000017',
+  jsonb_build_object('id','70000000-0000-4000-8000-000000000006',
+   'purchase_number','PH2-PUR-SUB','supplier_id',v_supplier,'paid_amount',0,
+   'items',jsonb_build_array(jsonb_build_object('id','71000000-0000-4000-8000-000000000006',
+    'product_id',v_original_product,'quantity',3,'received_quantity',0,'unit_id','pcs',
+    'unit_price',10,'cost_per_unit',10))));
+ v_result:=public.process_purchase_receipt(v_store,'60000000-0000-4000-8000-000000000018',
+  jsonb_build_object('id','73000000-0000-4000-8000-000000000006',
+   'purchase_id','70000000-0000-4000-8000-000000000006','approved_by',v_user,
+   'items',jsonb_build_array(jsonb_build_object('purchase_item_id','71000000-0000-4000-8000-000000000006',
+    'accepted_quantity',3,'substitute_product_id',v_substitute_product,
+    'substitute_cost_per_unit',15,'substitute_unit_price',15,'substitute_reason','Original unavailable; approved equivalent'))));
+ SELECT COALESCE(SUM(quantity),0) INTO v_stock FROM public.stock WHERE product_id=v_original_product;
+ IF v_stock<>0 OR NOT EXISTS(SELECT 1 FROM public.stock WHERE product_id=v_substitute_product AND quantity=3)
+    OR NOT EXISTS(SELECT 1 FROM public.purchase_receipt_items WHERE receipt_id='73000000-0000-4000-8000-000000000006'
+      AND original_product_id=v_original_product AND actual_product_id=v_substitute_product
+      AND substitute_reason='Original unavailable; approved equivalent')
+    OR (SELECT total_amount FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000006')<>45 THEN
+   RAISE EXCEPTION 'Approved substitute receipt mismatch';
+ END IF;
+ RAISE NOTICE 'PASS: rejected goods record, approved excess, approved substitute, and authorized partial closure';
+END
+$receiving_extensions_test$;
