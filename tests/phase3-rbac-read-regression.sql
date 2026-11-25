@@ -56,6 +56,42 @@ BEGIN
      OR position('reports.view' in pg_get_functiondef('public.check_inventory_expiry(uuid)'::regprocedure))>0 THEN
     RAISE EXCEPTION 'Inventory report RPC references an undefined reports.view permission';
   END IF;
+  -- Every static permission referenced by a SECURITY DEFINER RPC must exist in the RBAC catalog.
+  FOR r IN
+    SELECT DISTINCT (m.matches)[1] AS permission_code
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid=p.pronamespace
+      CROSS JOIN LATERAL regexp_matches(
+        pg_get_functiondef(p.oid),
+        'has_store_permission\\s*\\([^,]+,\\s*''([^'']+)''',
+        'g'
+      ) AS m(matches)
+     WHERE n.nspname='public'
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM public.permissions WHERE code=r.permission_code) THEN
+      RAISE EXCEPTION 'RPC references undefined RBAC permission %',r.permission_code;
+    END IF;
+  END LOOP;
+
+  -- Every SECURITY DEFINER function callable by authenticated must derive authority
+  -- from the Auth identity, the active store, a permission check, or the guarded
+  -- business-operation claim helper.
+  FOR r IN
+    SELECT p.proname,pg_get_function_identity_arguments(p.oid) AS args,
+           pg_get_functiondef(p.oid) AS body
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+     WHERE n.nspname='public' AND p.prosecdef
+       AND has_function_privilege('authenticated',p.oid,'EXECUTE')
+  LOOP
+    IF r.body NOT ILIKE '%auth.uid()%'
+       AND r.body NOT ILIKE '%has_store_permission%'
+       AND r.body NOT ILIKE '%current_user_store_id()%'
+       AND r.body NOT ILIKE '%_claim_business_operation%' THEN
+      RAISE EXCEPTION 'Authenticated can execute SECURITY DEFINER RPC without an identity/store/RBAC guard: %.%(%)',
+        'public',r.proname,r.args;
+    END IF;
+  END LOOP;
+
   RAISE NOTICE 'PASS: % business/sync tables have explicit restrictive read RBAC, users profile read is bounded, and report RPC permissions are defined',v_count;
 END
 $rbac_read_catalog$;
