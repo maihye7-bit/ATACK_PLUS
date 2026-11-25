@@ -378,7 +378,7 @@ BEGIN
         -- from the entered unit before computing the inventory weighted average.
         v_new_cost := CASE
           WHEN v_old_qty + v_base = 0 THEN v_cost/v_factor
-          WHEN v_old_qty = 0 THEN v_cost/v_factor
+          WHEN v_old_qty <= 0 THEN v_cost/v_factor
           ELSE round(((v_old_qty*v_old_cost)+(v_received_qty*v_cost))/(v_old_qty+v_base),4)
         END;
         UPDATE public.stock SET quantity=quantity+v_base WHERE id=v_stock;
