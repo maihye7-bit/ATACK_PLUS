@@ -208,6 +208,13 @@ BEGIN
    RAISE EXCEPTION 'Balance sheet equation does not balance after current earnings: %',v_debit;
  END IF;
 
+ IF NOT EXISTS(SELECT 1 FROM public.v_income_statement
+     WHERE store_id=v_store AND account_code='4000' AND balance>0)
+    OR NOT EXISTS(SELECT 1 FROM public.v_income_statement
+     WHERE store_id=v_store AND account_code='5000' AND balance>0) THEN
+   RAISE EXCEPTION 'Income statement does not show revenue and COGS with positive normal balances';
+ END IF;
+
  -- A malformed journal must be rejected by the deferred database invariant.
  BEGIN
    INSERT INTO public.journal_entries(id,store_id,entry_number,entry_date,source_type,source_id,
