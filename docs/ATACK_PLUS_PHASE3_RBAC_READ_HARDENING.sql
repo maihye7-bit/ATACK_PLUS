@@ -67,6 +67,7 @@ BEGIN
 
     EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I',
                    'rbac_read_'||r.table_name,r.table_name);
+    EXECUTE format('GRANT SELECT ON TABLE public.%I TO authenticated',r.table_name);
     EXECUTE format(
       'CREATE POLICY %I ON public.%I AS RESTRICTIVE FOR SELECT TO authenticated USING (public.has_store_permission(public.current_user_store_id(), %L))',
       'rbac_read_'||r.table_name,r.table_name,r.permission_code
@@ -74,6 +75,7 @@ BEGIN
   END LOOP;
 
   -- Users can always read their own profile; listing other users requires users.manage.
+  GRANT SELECT ON TABLE public.users TO authenticated;
   DROP POLICY IF EXISTS rbac_read_users ON public.users;
   CREATE POLICY rbac_read_users ON public.users
     AS RESTRICTIVE FOR SELECT TO authenticated
