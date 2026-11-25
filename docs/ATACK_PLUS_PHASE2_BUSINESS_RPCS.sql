@@ -115,7 +115,7 @@ BEGIN
         RAISE EXCEPTION 'Missing permission: %', p_permission USING ERRCODE = '42501';
     END IF;
 
-    v_hash := encode(digest(convert_to(p_operation_name || ':' || p_payload::text, 'UTF8'), 'sha256'), 'hex');
+    v_hash := encode(public.atack_digest(convert_to(p_operation_name || ':' || p_payload::text, 'UTF8'), 'sha256'), 'hex');
     INSERT INTO public.processed_operations(
         store_id, operation_id, operation_type, entity_table, entity_uuid, payload_hash
     ) VALUES (
