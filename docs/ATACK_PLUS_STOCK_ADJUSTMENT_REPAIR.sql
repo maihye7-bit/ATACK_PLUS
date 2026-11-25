@@ -4,8 +4,13 @@
 BEGIN;
 
 -- D-016: permit negative quantity only through the privileged RPC.
+-- The original inline CHECKs were auto-named stock_check/stock_check1 by
+-- PostgreSQL. Drop both as well as the explicit names used by earlier drafts;
+-- otherwise the old quantity >= 0 check still blocks D-016 negative stock.
 ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_quantity_check;
 ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_reserved_quantity_check;
+ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_check;
+ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_check1;
 ALTER TABLE public.stock ADD CONSTRAINT stock_reserved_quantity_check
  CHECK(reserved_quantity>=0 AND reserved_quantity<=GREATEST(quantity,0));
 
