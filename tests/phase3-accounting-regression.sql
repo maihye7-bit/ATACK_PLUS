@@ -96,6 +96,15 @@ BEGIN
    RAISE EXCEPTION 'Supplier bank payment journal has incorrect accounts';
  END IF;
 
+ IF NOT EXISTS(
+   SELECT 1 FROM public.journal_entries je
+   JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
+   JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+   WHERE je.store_id=v_store AND je.source_type='SALE'
+     AND je.source_id='80000000-0000-4000-8000-000000000002'
+     AND gl.entry_type='DEBIT' AND coa.account_code='1000' AND gl.amount=50
+ ) THEN RAISE EXCEPTION 'Cash sale was not posted to the cash drawer'; END IF;
+
  -- Every sale, purchase, return and payment exercised by the preceding business suite is posted once.
  IF EXISTS(
    SELECT 1 FROM public.invoices i
@@ -168,6 +177,15 @@ BEGIN
        FROM public.purchase_items pi WHERE pi.purchase_id=p.id),0)
    )>0.0001
  ) THEN RAISE EXCEPTION 'Goods-in-transit balance does not reconcile to outstanding purchase quantities'; END IF;
+
+ IF EXISTS(
+   SELECT 1 FROM public.general_ledger gl
+   JOIN public.journal_entries je ON je.id=gl.journal_entry_id
+   WHERE je.store_id=v_store AND
+     (gl.reference_id IS DISTINCT FROM je.source_id
+      OR gl.reference_table IS DISTINCT FROM je.source_type
+      OR gl.store_id IS DISTINCT FROM je.store_id)
+ ) THEN RAISE EXCEPTION 'General ledger source or store reference mismatch'; END IF;
 
  IF EXISTS(
    SELECT 1 FROM public.journal_entries je
