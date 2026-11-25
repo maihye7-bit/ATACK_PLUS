@@ -66,6 +66,8 @@ DECLARE
     v_permission TEXT;
     v_user_store UUID;
     v_outbox_id UUID;
+    v_allowed_columns TEXT[];
+    v_invalid_columns TEXT[];
 BEGIN
     IF p_store_id IS NULL OR p_record_uuid IS NULL OR p_idempotency_key IS NULL
        OR NULLIF(btrim(p_device_id), '') IS NULL
@@ -109,6 +111,23 @@ BEGIN
     IF COALESCE(auth.role(), '') <> 'service_role'
        AND NOT public.has_store_permission(p_store_id, v_permission) THEN
         RAISE EXCEPTION 'Permission denied for generic Push to %', p_table_name;
+    END IF;
+
+    v_allowed_columns := CASE p_table_name
+      WHEN 'categories' THEN ARRAY['parent_id','name','code','sort_order','is_active']
+      WHEN 'brands' THEN ARRAY['name','scent','size','is_active']
+      WHEN 'products' THEN ARRAY['barcode','name','description','category_id','brand_id',
+        'primary_unit_id','minimum_stock','max_stock','weight','length','width','height',
+        'expiry_enabled','batch_enabled','is_active']
+      WHEN 'customers' THEN ARRAY['code','name','email','phone','address','city','tax_number','is_active']
+      WHEN 'suppliers' THEN ARRAY['code','name','email','phone','address','city','tax_number',
+        'contact_person','payment_terms','is_active']
+    END;
+    SELECT array_agg(k) INTO v_invalid_columns
+      FROM jsonb_object_keys(p_record_json) AS k
+     WHERE k NOT IN ('id','store_id') AND NOT (k = ANY(v_allowed_columns));
+    IF COALESCE(cardinality(v_invalid_columns),0) > 0 THEN
+        RAISE EXCEPTION 'Outbox payload contains protected or unsupported fields: %', v_invalid_columns;
     END IF;
 
     v_hash := encode(digest(jsonb_build_object(
