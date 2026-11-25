@@ -71,6 +71,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PURCHASE_RETURN_RECEIPT_LINK.sql"
+      - name: Apply stock adjustment repair
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_STOCK_ADJUSTMENT_REPAIR.sql"
       - name: Run Phase 2 business regression tests
         env:
           PGPASSWORD: postgres
