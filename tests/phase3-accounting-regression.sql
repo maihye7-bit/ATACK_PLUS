@@ -9,7 +9,7 @@ DECLARE
  v_customer UUID:='90000000-0000-4000-8000-000000000002';
  v_result JSONB;
  v_debit NUMERIC(18,4); v_credit NUMERIC(18,4);
- v_count INTEGER; v_journal UUID;
+ v_count INTEGER; v_journal UUID; v_proc TEXT;
 BEGIN
  PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
 
@@ -20,6 +20,23 @@ BEGIN
         '4000','4010','4100','4200','5000','5100','5200'))<>17 THEN
    RAISE EXCEPTION 'Default chart of accounts is incomplete';
  END IF;
+
+ FOREACH v_proc IN ARRAY ARRAY[
+   'public.process_sale_invoice(uuid,uuid,jsonb)',
+   'public.process_purchase(uuid,uuid,jsonb)',
+   'public.process_customer_payment(uuid,uuid,jsonb)',
+   'public.process_supplier_payment(uuid,uuid,jsonb)',
+   'public.process_sale_return(uuid,uuid,jsonb)',
+   'public.process_purchase_return(uuid,uuid,jsonb)',
+   'public.process_purchase_receipt(uuid,uuid,jsonb)',
+   'public.process_purchase_amendment(uuid,uuid,jsonb)',
+   'public.process_purchase_close_remaining(uuid,uuid,jsonb)'
+ ] LOOP
+   IF has_function_privilege('anon',v_proc,'EXECUTE')
+      OR NOT has_function_privilege('authenticated',v_proc,'EXECUTE') THEN
+     RAISE EXCEPTION 'Accounting RPC grants are unsafe for %',v_proc;
+   END IF;
+ END LOOP;
 
  -- A sale on credit, followed by a bank transfer collection, must create two distinct journals.
  INSERT INTO public.customers(id,store_id,code,name,current_debt,credit_balance,is_active)
