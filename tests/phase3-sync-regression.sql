@@ -47,26 +47,26 @@ BEGIN
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Cross-store device was allowed to Pull'; END IF;
 
-  v_denied:=FALSE;
-  BEGIN
-    PERFORM * FROM public.get_unsynced_records(v_store,v_device,'journal_entries',0);
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
-  END;
-  IF NOT v_denied THEN RAISE EXCEPTION 'Unapproved journal_entries Pull was allowed'; END IF;
+  -- Phase 3 server-generated records are pullable, but not generic-pushable.
+  PERFORM * FROM public.get_unsynced_records(v_store,v_device,'journal_entries',0);
+  PERFORM * FROM public.get_unsynced_records(v_store,v_device,'purchase_returns',0);
+  IF NOT public.acknowledge_sync_cursor(v_store,v_device,'purchase_returns',0) THEN
+    RAISE EXCEPTION 'Phase 3 table initial cursor could not be acknowledged';
+  END IF;
 
   v_denied:=FALSE;
   BEGIN
-    PERFORM * FROM public.get_unsynced_records(v_store,v_device,'purchase_returns',0);
+    PERFORM * FROM public.get_unsynced_records(v_store,v_device,'audit_logs',0);
   EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
   END;
-  IF NOT v_denied THEN RAISE EXCEPTION 'Untracked Phase 3 table Pull was allowed'; END IF;
+  IF NOT v_denied THEN RAISE EXCEPTION 'Untracked audit_logs Pull was allowed'; END IF;
 
   v_denied:=FALSE;
   BEGIN
-    PERFORM public.acknowledge_sync_cursor(v_store,v_device,'journal_entries',0);
+    PERFORM public.acknowledge_sync_cursor(v_store,v_device,'audit_logs',0);
   EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
   END;
-  IF NOT v_denied THEN RAISE EXCEPTION 'Unapproved table ACK was allowed'; END IF;
+  IF NOT v_denied THEN RAISE EXCEPTION 'Untracked table ACK was allowed'; END IF;
 
   v_denied:=FALSE;
   BEGIN
