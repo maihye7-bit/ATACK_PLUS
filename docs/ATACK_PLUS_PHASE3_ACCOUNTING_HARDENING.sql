@@ -694,6 +694,8 @@ BEGIN
             (SELECT id FROM public.purchase_receipts WHERE purchase_id=(SELECT purchase_id FROM public.purchase_closures WHERE id=v_id)))
         OR (je.source_type='ADJUSTMENT' AND je.source_id IN
             (SELECT id FROM public.purchase_amendments WHERE purchase_id=(SELECT purchase_id FROM public.purchase_closures WHERE id=v_id)))
+        OR (je.source_type='ADJUSTMENT' AND je.source_id IN
+            (SELECT id FROM public.purchase_closures WHERE purchase_id=(SELECT purchase_id FROM public.purchase_closures WHERE id=v_id)))
       );
    IF v_total>v_transit_balance+0.0001 THEN
      RAISE EXCEPTION 'Closed quantity exceeds goods-in-transit balance: requested %, available %',
