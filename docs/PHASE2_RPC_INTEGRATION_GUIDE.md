@@ -73,13 +73,30 @@ Receiving status is tracked independently from payment status:
 - `COMPLETE`: every purchase line is fully received.
 - `CLOSED`: reserved for a future explicit close-remaining operation; not set by this RPC.
 
-### 4. Customer payment
+### 4. Receiving, rejected goods, excess and substitute products
+
+Every later receipt is stored as a separate `purchase_receipts` record with its own `purchase_receipt_items`. The initial quantity received during purchase creation is also recorded. Each line preserves ordered, accepted, excess and rejected quantities separately.
+
+`process_purchase_receipt` item fields:
+- `purchase_item_id`, `accepted_quantity`: accepted quantity against the ordered amount.
+- `rejected_quantity`, `rejection_reason`, `packaging_condition`, `photo_paths`: rejected goods remain in the receipt record but do not enter saleable stock or count as received.
+- `excess_quantity`, `excess_reason`: requires `purchases.receive_excess` and `approved_by`; approved excess enters stock and adjusts purchase value and supplier debt.
+- `substitute_product_id`, `substitute_reason`, `substitute_cost_per_unit`, `substitute_unit_price`: requires `purchases.receive_substitute` and `approved_by`; only the approved substitute enters stock, and the purchase value is adjusted to the substitute price.
+- `location_id` selects the receiving stock location.
+
+Use `process_purchase_close_remaining` to close outstanding quantities that cannot be supplied. It requires `purchases.close_remaining`, a reason, and item quantities. Closed quantities never enter stock and are preserved with the user, date, and reason. The purchase is marked `CLOSED_PARTIAL`.
+
+Use `process_purchase_amendment` to amend a purchase after receipt. It requires `purchases.edit_after_receipt`, a reason, and the purchase item changes. It records old/new values, adjusts supplier debt and totals atomically, and rejects a new ordered quantity below the already received plus closed quantity. Existing receipt and return records are never rewritten.
+
+For a return against a specific receipt (especially a substitute or excess line), pass `purchase_receipt_item_id` in the `process_purchase_return` item. This ensures the actual received product, cost, unit, and quantity cap are used. Returns can be made before all ordered quantities are received, but never exceed the accepted quantity on the selected receipt line.
+
+### 5. Customer payment
 
 RPC: `process_customer_payment`
 
 Payload fields: `id`, `customer_id`, `amount`, `payment_method`, optional `reference_no`, `notes`, and optional `allocations[]` (`invoice_id`, `amount`). Explicit allocations are applied first; any remainder is allocated FIFO to the customer's oldest outstanding sale invoices. If the whole payment cannot be allocated, the transaction is rejected. Payments larger than current debt are rejected in this version.
 
-### 5. Supplier payment
+### 6. Supplier payment
 
 RPC: `process_supplier_payment`
 
