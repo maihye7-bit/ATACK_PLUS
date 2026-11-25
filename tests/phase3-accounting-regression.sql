@@ -146,11 +146,15 @@ BEGIN
  SELECT id INTO v_journal FROM public.journal_entries
   WHERE store_id=v_store AND source_type='RETURN'
     AND source_id='91000000-0000-4000-8000-000000000003';
- IF v_journal IS NULL OR NOT EXISTS(SELECT 1 FROM public.general_ledger
-    WHERE journal_entry_id=v_journal AND entry_type='DEBIT' AND amount=100)
-    OR NOT EXISTS(SELECT 1 FROM public.general_ledger
-    WHERE journal_entry_id=v_journal AND entry_type='CREDIT' AND amount=100) THEN
-   RAISE EXCEPTION 'Mixed credit return journal is not balanced';
+ IF v_journal IS NULL OR NOT EXISTS(
+    SELECT 1 FROM public.journal_entries je
+     WHERE je.id=v_journal AND je.total_debit=je.total_credit
+       AND je.total_debit=(SELECT COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)
+                             FROM public.general_ledger gl WHERE gl.journal_entry_id=je.id)
+       AND je.total_credit=(SELECT COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)
+                              FROM public.general_ledger gl WHERE gl.journal_entry_id=je.id)
+ ) THEN
+   RAISE EXCEPTION 'Mixed credit return journal header and ledger totals do not balance';
  END IF;
 
  -- Supplier payment is posted against payables and the bank, not the cash drawer.
