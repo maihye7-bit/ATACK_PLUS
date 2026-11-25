@@ -107,10 +107,13 @@ DECLARE
     v_qty NUMERIC(18,4);
     v_received NUMERIC(18,4);
     v_status TEXT;
+    v_cost NUMERIC(18,4);
 BEGIN
     PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
     INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
-    VALUES(v_product,v_store,'Partial Receipt Test','pcs',0,TRUE);
+    VALUES(v_product,v_store,'Partial Receipt Test','pcs',10,TRUE);
+    INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
+    VALUES(v_product,'main',10,0);
 
     v_result:=public.process_purchase(
       v_store,'60000000-0000-4000-8000-000000000004',
@@ -123,8 +126,10 @@ BEGIN
     SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
     SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
     SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
-    IF v_qty IS DISTINCT FROM 4 OR v_received IS DISTINCT FROM 4 OR v_status IS DISTINCT FROM 'PARTIAL' THEN
-      RAISE EXCEPTION 'Initial partial receipt mismatch: stock %, received %, status %',v_qty,v_received,v_status;
+    SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
+    IF v_qty IS DISTINCT FROM 14 OR v_received IS DISTINCT FROM 4 OR v_status IS DISTINCT FROM 'PARTIAL'
+       OR v_cost IS DISTINCT FROM 15.7143 THEN
+      RAISE EXCEPTION 'Initial partial receipt mismatch: stock %, received %, status %, weighted cost %',v_qty,v_received,v_status,v_cost;
     END IF;
 
     v_result:=public.process_purchase_receipt(
@@ -143,7 +148,7 @@ BEGIN
     IF (v_result->>'replayed')::boolean IS DISTINCT FROM TRUE THEN RAISE EXCEPTION 'Receipt retry was not idempotent'; END IF;
 
     SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
-    IF v_qty IS DISTINCT FROM 7 THEN RAISE EXCEPTION 'Receipt replay duplicated stock: %',v_qty; END IF;
+    IF v_qty IS DISTINCT FROM 17 THEN RAISE EXCEPTION 'Receipt replay duplicated stock or receipt stock mismatch: %',v_qty; END IF;
 
     -- Over-receipt must roll back without changing the received quantity or stock.
     BEGIN
@@ -165,7 +170,7 @@ BEGIN
     SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
     SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
     SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
-    IF v_qty IS DISTINCT FROM 10 OR v_received IS DISTINCT FROM 10 OR v_status IS DISTINCT FROM 'COMPLETE' THEN
+    IF v_qty IS DISTINCT FROM 20 OR v_received IS DISTINCT FROM 10 OR v_status IS DISTINCT FROM 'COMPLETE' THEN
       RAISE EXCEPTION 'Final receipt mismatch: stock %, received %, status %',v_qty,v_received,v_status;
     END IF;
     RAISE NOTICE 'PASS: partial receiving, idempotent receipt replay, over-receipt rejection, final completion';
