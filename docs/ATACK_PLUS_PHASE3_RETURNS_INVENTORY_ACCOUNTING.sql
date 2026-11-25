@@ -347,7 +347,7 @@ BEGIN
         v_product_id := (v_item->>'product_id')::UUID;
         v_qty := (v_item->>'quantity')::NUMERIC;
         v_unit := v_item->>'unit_id';
-        v_unit_price := COALESCE(NULLIF(v_item->>'unit_price')::NUMERIC, 0);
+        v_unit_price := COALESCE(NULLIF(v_item->>'unit_price','')::NUMERIC, 0);
 
         IF v_qty <= 0 OR v_unit_price < 0 THEN
             RAISE EXCEPTION 'Invalid return item quantity or price';
@@ -570,7 +570,7 @@ BEGIN
         END IF;
 
         v_line_qty := v_qty * v_factor;
-        v_line_total := COALESCE(NULLIF(v_item->>'unit_price')::NUMERIC, 0) * v_line_qty;
+        v_line_total := COALESCE(NULLIF(v_item->>'unit_price','')::NUMERIC, 0) * v_line_qty;
 
         -- Check available inventory (from original sale)
         SELECT COALESCE((SELECT quantity FROM stock s WHERE s.product_id = v_product_id), 0) INTO v_available_qty;
@@ -590,7 +590,7 @@ BEGIN
             batch_number, expiry_date
         ) VALUES(
             v_return_id, v_product_id, v_qty,
-            COALESCE(NULLIF(v_item->>'unit_price')::NUMERIC, 0), v_line_total,
+            COALESCE(NULLIF(v_item->>'unit_price','')::NUMERIC, 0), v_line_total,
             NULLIF(v_item->>'batch_number',''), NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ
         );
 
@@ -606,8 +606,8 @@ BEGIN
                 batch_number, expiry_date, reason, user_id
             ) VALUES(
                 v_product_id, 'main', 'RETURN_IN', v_line_qty, v_unit,
-                COALESCE(NULLIF(v_item->>'cost_per_unit')::NUMERIC, 0),
-                v_line_qty * COALESCE(NULLIF(v_item->>'cost_per_unit')::NUMERIC, 0),
+                COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC, 0),
+                v_line_qty * COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC, 0),
                 v_return_id, 'return',
                 NULLIF(v_item->>'batch_number',''), NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ,
                 'Sale return ' || v_return_number, v_created_by
@@ -681,7 +681,7 @@ DECLARE
     v_reason TEXT := p_payload->>'reason';
     v_quantity NUMERIC(18,4) := (p_payload->>'quantity')::NUMERIC;
     v_unit TEXT := p_payload->>'unit_id';
-    v_cost_per_unit NUMERIC(18,4) := COALESCE(NULLIF(p_payload->>'cost_per_unit')::NUMERIC, 0);
+    v_cost_per_unit NUMERIC(18,4) := COALESCE(NULLIF(p_payload->>'cost_per_unit','')::NUMERIC, 0);
     v_line_qty NUMERIC(18,4);
     v_factor NUMERIC(18,6);
     v_line_total NUMERIC(18,4);
@@ -761,11 +761,11 @@ BEGIN
     INSERT INTO stock_adjustments(
         id, store_id, adjustment_number, product_id, adjustment_type,
         reason, quantity, unit_id, cost_per_unit, total_value,
-        refund_method, created_by
+        created_by
     ) VALUES(
         v_adjustment_id, p_store_id, v_adjustment_number, v_product_id, v_adjustment_type,
         v_reason, v_quantity, v_unit, v_cost_per_unit, v_line_total,
-        v_refund_method, v_user
+        v_user
     );
 
     -- Update stock
