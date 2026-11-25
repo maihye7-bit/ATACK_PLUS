@@ -6,6 +6,20 @@
 
 BEGIN;
 
+-- D-052: persist received quantities independently from ordered quantities.
+ALTER TABLE public.purchase_items ADD COLUMN IF NOT EXISTS received_quantity NUMERIC(18,4) NOT NULL DEFAULT 0;
+ALTER TABLE public.purchase_items DROP CONSTRAINT IF EXISTS purchase_items_received_quantity_check;
+ALTER TABLE public.purchase_items ADD CONSTRAINT purchase_items_received_quantity_check CHECK (received_quantity >= 0 AND received_quantity <= quantity);
+UPDATE public.purchase_items SET received_quantity=quantity WHERE received=TRUE AND received_quantity=0;
+ALTER TABLE public.purchases ADD COLUMN IF NOT EXISTS receiving_status TEXT NOT NULL DEFAULT 'PENDING';
+ALTER TABLE public.purchases DROP CONSTRAINT IF EXISTS purchases_receiving_status_check;
+ALTER TABLE public.purchases ADD CONSTRAINT purchases_receiving_status_check CHECK (receiving_status IN ('PENDING','PARTIAL','COMPLETE','CLOSED'));
+UPDATE public.purchases p SET receiving_status=CASE
+ WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'PENDING'
+ WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)=0 THEN 'PENDING'
+ WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'COMPLETE'
+ ELSE 'PARTIAL' END;
+
 -- Correct allocation validation: invoice.remaining_amount is the authoritative
 -- outstanding amount and is decremented in the same locked transaction. Summing
 -- historical allocations against the already-decremented remainder double-counts
@@ -293,6 +307,7 @@ DECLARE
     v_tax_line NUMERIC(18,4); v_line NUMERIC(18,4); v_factor NUMERIC(18,6);
     v_base NUMERIC(18,4); v_primary TEXT; v_stock UUID; v_payment UUID; v_method TEXT;
     v_old_qty NUMERIC(18,4); v_old_cost NUMERIC(18,4); v_new_cost NUMERIC(18,4);
+    v_received_qty NUMERIC(18,4);
 BEGIN
     IF COALESCE(jsonb_typeof(p_payload->'items'),'')<>'array' THEN RAISE EXCEPTION 'Purchase items must be a JSON array'; END IF;
     IF jsonb_array_length(p_payload->'items')=0 THEN RAISE EXCEPTION 'Purchase must contain at least one item'; END IF;
@@ -306,9 +321,12 @@ BEGIN
         v_product:=(v_item->>'product_id')::UUID; v_qty:=(v_item->>'quantity')::NUMERIC;
         v_unit:=v_item->>'unit_id'; v_price:=(v_item->>'unit_price')::NUMERIC;
         v_cost:=COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC,v_price);
+        v_received_qty:=COALESCE(NULLIF(v_item->>'received_quantity','')::NUMERIC,v_qty);
         -- D-029: TVA is deferred in v1; retain schema fields without automatic tax.
         v_tax_rate:=0;
-        IF v_qty<=0 OR v_price<0 OR v_cost<0 OR v_tax_rate NOT BETWEEN 0 AND 100 THEN RAISE EXCEPTION 'Invalid purchase line'; END IF;
+        IF v_qty<=0 OR v_price<0 OR v_cost<0 OR v_received_qty<0 OR v_received_qty>v_qty THEN
+            RAISE EXCEPTION 'Invalid purchase quantity, received quantity or cost';
+        END IF;
         IF NOT EXISTS(SELECT 1 FROM public.products WHERE id=v_product AND store_id=p_store_id AND is_active AND deleted_at IS NULL) THEN RAISE EXCEPTION 'Product does not belong to this store or is inactive'; END IF;
         SELECT CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END INTO v_factor
           FROM public.products p LEFT JOIN public.product_units pu ON pu.product_id=p.id AND pu.unit_id=v_unit
@@ -330,6 +348,7 @@ BEGIN
         v_product:=(v_item->>'product_id')::UUID; v_qty:=(v_item->>'quantity')::NUMERIC;
         v_unit:=v_item->>'unit_id'; v_price:=(v_item->>'unit_price')::NUMERIC;
         v_cost:=COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC,v_price);
+        v_received_qty:=COALESCE(NULLIF(v_item->>'received_quantity','')::NUMERIC,v_qty);
         -- D-029: TVA is deferred in v1; retain schema fields without automatic tax.
         v_tax_rate:=0;
         -- Serialize receipts per product, then lock its stock rows in a stable order.
@@ -341,12 +360,14 @@ BEGIN
           LEFT JOIN public.product_units pu ON pu.product_id=p.id AND pu.unit_id=v_unit
          WHERE p.id=v_product AND p.store_id=p_store_id
          FOR UPDATE OF p;
-        v_base:=v_qty*v_factor; v_line:=v_qty*v_price; v_tax_line:=0;
+        v_base:=v_received_qty*v_factor; v_line:=v_qty*v_price; v_tax_line:=0;
         INSERT INTO public.purchase_items(id,purchase_id,product_id,quantity,quantity_unit_id,unit_price,
-            cost_per_unit,tax_rate,tax_amount,line_total,batch_number,expiry_date,received,received_date)
+            cost_per_unit,tax_rate,tax_amount,line_total,batch_number,expiry_date,received,received_date,received_quantity)
         VALUES(COALESCE(NULLIF(v_item->>'id','')::UUID,gen_random_uuid()),v_id,v_product,v_qty,v_unit,
             v_price,v_cost,v_tax_rate,v_tax_line,v_line+v_tax_line,v_item->>'batch_number',
-            NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ,TRUE,NOW());
+            NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ,v_received_qty=v_qty,
+            CASE WHEN v_received_qty>0 THEN NOW() ELSE NULL END,v_received_qty);
+        IF v_received_qty=0 THEN CONTINUE; END IF;
         INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
         VALUES(v_product,v_location,0,0) ON CONFLICT(product_id,location_id) DO NOTHING;
         PERFORM 1 FROM public.stock WHERE product_id=v_product ORDER BY location_id FOR UPDATE;
@@ -369,6 +390,13 @@ BEGIN
         UPDATE public.products SET cost_price=v_new_cost,updated_at=NOW() WHERE id=v_product;
     END LOOP;
 
+    UPDATE public.purchases p SET receiving_status=CASE
+      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)=0 THEN 'PENDING'
+      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'COMPLETE'
+      ELSE 'PARTIAL' END,
+      received_date=CASE WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN NOW() ELSE NULL END
+     WHERE p.id=v_id;
+
     SELECT current_debt INTO v_debt FROM public.suppliers WHERE id=v_supplier FOR UPDATE;
     INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
     VALUES(v_supplier,'PURCHASE',v_total,v_debt+v_total,v_id,'Purchase '||v_number,v_user);
@@ -385,6 +413,86 @@ BEGIN
         'total',v_total,'paid',v_paid,'remaining',v_total-v_paid);
 END;
 $$;
+
+-- PARTIAL PURCHASE RECEIVING: each receipt is atomic and independently idempotent.
+-- Payload: {id: receipt UUID, purchase_id, location_id?, items:[{purchase_item_id, quantity}]}
+CREATE OR REPLACE FUNCTION public.process_purchase_receipt(
+    p_store_id UUID,p_operation_id UUID,p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,extensions,public,pg_temp
+AS $
+DECLARE
+    v_user UUID; v_replay BOOLEAN; v_receipt_id UUID := (p_payload->>'id')::UUID;
+    v_purchase_id UUID := (p_payload->>'purchase_id')::UUID;
+    v_location TEXT := COALESCE(NULLIF(p_payload->>'location_id',''),'main');
+    v_row JSONB; v_item_id UUID; v_qty NUMERIC(18,4); v_product UUID;
+    v_ordered NUMERIC(18,4); v_received NUMERIC(18,4); v_factor NUMERIC(18,6);
+    v_primary TEXT; v_cost NUMERIC(18,4); v_old_cost NUMERIC(18,4);
+    v_old_qty NUMERIC(18,4); v_base NUMERIC(18,4); v_stock UUID;
+    v_purchase_number TEXT; v_received_total NUMERIC(18,4) := 0;
+BEGIN
+    IF COALESCE(jsonb_typeof(p_payload->'items'),'')<>'array' OR jsonb_array_length(p_payload->'items')=0 THEN
+        RAISE EXCEPTION 'Receipt items must be a non-empty JSON array';
+    END IF;
+    IF v_location NOT IN ('main','warehouse','storage') THEN RAISE EXCEPTION 'Invalid stock location'; END IF;
+    SELECT c.app_user_id,c.already_processed INTO v_user,v_replay
+      FROM public._claim_business_operation(p_store_id,p_operation_id,'purchase_receipt',v_receipt_id,p_payload,'purchases.receive') c;
+    IF v_replay THEN RETURN jsonb_build_object('success',TRUE,'replayed',TRUE,'receipt_id',v_receipt_id); END IF;
+    SELECT purchase_number INTO v_purchase_number FROM public.purchases
+     WHERE id=v_purchase_id AND store_id=p_store_id AND status<>'CANCELLED' FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Purchase not found or cancelled'; END IF;
+
+    FOR v_row IN SELECT e.value FROM jsonb_array_elements(p_payload->'items') e(value)
+                 ORDER BY e.value->>'purchase_item_id'
+    LOOP
+      v_item_id:=(v_row->>'purchase_item_id')::UUID;
+      v_qty:=(v_row->>'quantity')::NUMERIC;
+      IF v_qty IS NULL OR v_qty<=0 THEN RAISE EXCEPTION 'Receipt quantity must be positive'; END IF;
+      SELECT pi.product_id,pi.quantity,pi.received_quantity,pi.cost_per_unit,
+             p.primary_unit_id,p.cost_price,
+             CASE WHEN pi.quantity_unit_id=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END
+        INTO v_product,v_ordered,v_received,v_cost,v_primary,v_old_cost,v_factor
+        FROM public.purchase_items pi JOIN public.products p ON p.id=pi.product_id
+        LEFT JOIN public.product_units pu ON pu.product_id=p.id AND pu.unit_id=pi.quantity_unit_id
+       WHERE pi.id=v_item_id AND pi.purchase_id=v_purchase_id FOR UPDATE OF pi,p;
+      IF NOT FOUND THEN RAISE EXCEPTION 'Purchase item not found in this purchase'; END IF;
+      IF v_factor IS NULL OR v_factor<=0 THEN RAISE EXCEPTION 'Purchase item unit conversion is invalid'; END IF;
+      IF v_received+v_qty>v_ordered THEN
+        RAISE EXCEPTION 'Receipt quantity exceeds outstanding purchase quantity for item %',v_item_id USING ERRCODE='23514';
+      END IF;
+      v_base:=v_qty*v_factor;
+      INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
+      VALUES(v_product,v_location,0,0) ON CONFLICT(product_id,location_id) DO NOTHING;
+      PERFORM 1 FROM public.stock WHERE product_id=v_product ORDER BY location_id FOR UPDATE;
+      SELECT COALESCE(SUM(quantity),0) INTO v_old_qty FROM public.stock WHERE product_id=v_product;
+      SELECT id INTO v_stock FROM public.stock WHERE product_id=v_product AND location_id=v_location;
+      UPDATE public.stock SET quantity=quantity+v_base WHERE id=v_stock;
+      UPDATE public.purchase_items SET received_quantity=received_quantity+v_qty,
+        received=(received_quantity+v_qty)>=quantity,
+        received_date=CASE WHEN (received_quantity+v_qty)>=quantity THEN NOW() ELSE received_date END
+       WHERE id=v_item_id;
+      UPDATE public.products SET cost_price=CASE WHEN v_old_qty=0 THEN round(v_cost/v_factor,4)
+        ELSE round(((v_old_qty*v_old_cost)+(v_qty*v_cost))/(v_old_qty+v_base),4) END,updated_at=NOW()
+       WHERE id=v_product;
+      INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
+        reference_id,reference_type,reason,user_id)
+      VALUES(v_product,v_location,'IN',v_base,v_primary,v_cost/v_factor,v_qty*v_cost,
+        v_purchase_id,'purchase','Partial receipt '||v_receipt_id::text||' for purchase '||v_purchase_number,v_user);
+      v_received_total:=v_received_total+v_base;
+    END LOOP;
+    UPDATE public.purchases p SET receiving_status=CASE
+      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)=0 THEN 'PENDING'
+      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'COMPLETE'
+      ELSE 'PARTIAL' END,
+      received_date=CASE WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN NOW() ELSE NULL END,
+      updated_at=NOW() WHERE p.id=v_purchase_id;
+    RETURN jsonb_build_object('success',TRUE,'replayed',FALSE,'receipt_id',v_receipt_id,
+      'purchase_id',v_purchase_id,'received_base_quantity',v_received_total);
+END;
+$;
+
+REVOKE ALL ON FUNCTION public.process_purchase_receipt(UUID,UUID,JSONB) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.process_purchase_receipt(UUID,UUID,JSONB) TO authenticated;
 
 -- CUSTOMER PAYMENT: creates payment + ledger entry + invoice allocations and
 -- updates cached debt/invoice balances atomically. Payload: {id,customer_id,amount,
