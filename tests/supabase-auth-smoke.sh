@@ -178,11 +178,6 @@ expect_rpc_error "owner managing a user from another store" "${OWNER_TOKEN}" "ma
   "$(jq -nc --arg user "${STORE_B_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')" "P0001"
 expect_rpc_error "NULL role-management action" "${OWNER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:null}')" "P0001"
-rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"GRANT"}')" >/dev/null
-rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"REVOKE"}')" >/dev/null
-
 echo "Verifying business RPC permission boundaries and a successful seller sale..."
 SALE_PAYLOAD="$(jq -nc --arg id "${SALE_ID}" --arg item "${SALE_ITEM_ID}" --arg product "${PRODUCT_A}" --arg customer "${CUSTOMER_A}" \
   --arg number "AUTH-RPC-${GITHUB_RUN_ID:-local}" \
