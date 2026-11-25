@@ -176,3 +176,125 @@ BEGIN
     RAISE NOTICE 'PASS: partial receiving, idempotent receipt replay, over-receipt rejection, final completion';
 END
 $partial_receipt_test$;
+
+-- D-014/D-015: returns must be capped by the original source line, use original
+-- prices/costs, avoid automatic cash refunds, and preserve customer/supplier credits.
+DO $returns_regression$
+DECLARE
+    v_store UUID := '10000000-0000-4000-8000-000000000001';
+    v_auth UUID := '20000000-0000-4000-8000-000000000001';
+    v_supplier UUID := '40000000-0000-4000-8000-000000000001';
+    v_sale_product UUID := '50000000-0000-4000-8000-000000000001';
+    v_purchase_product UUID := '50000000-0000-4000-8000-000000000002';
+    v_customer UUID := '90000000-0000-4000-8000-000000000001';
+    v_invoice UUID := '80000000-0000-4000-8000-000000000002';
+    v_invoice_item UUID;
+    v_result JSONB;
+    v_stock NUMERIC(18,4);
+    v_total NUMERIC(18,4);
+    v_debt NUMERIC(18,4);
+    v_credit NUMERIC(18,4);
+    v_payments_before INTEGER;
+    v_payments_after INTEGER;
+BEGIN
+    PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
+
+    -- Paid customer sale: return must create customer credit, not an outgoing payment.
+    INSERT INTO public.customers(id,store_id,code,name,current_debt,credit_balance,is_active)
+    VALUES(v_customer,v_store,'PH2-CUST-001','Return Credit Test',0,0,TRUE);
+    v_result:=public.process_sale_invoice(
+      v_store,'60000000-0000-4000-8000-000000000008',
+      jsonb_build_object('id',v_invoice,'invoice_number','PH2-INV-CREDIT',
+        'customer_id',v_customer,'paid_amount',50,'payment_method','CASH',
+        'items',jsonb_build_array(jsonb_build_object('product_id',v_sale_product,
+          'quantity',1,'unit_id','pcs','unit_price',50)))
+    );
+    SELECT id INTO v_invoice_item FROM public.invoice_items WHERE invoice_id=v_invoice;
+    SELECT count(*) INTO v_payments_before FROM public.customer_payments WHERE customer_id=v_customer;
+
+    v_result:=public.process_sale_return(
+      v_store,'60000000-0000-4000-8000-000000000009',
+      jsonb_build_object('id','91000000-0000-4000-8000-000000000001',
+        'invoice_id',v_invoice,'return_number','PH2-SRET-001','refund_method','CREDIT',
+        'return_condition','GOOD',
+        'items',jsonb_build_array(jsonb_build_object('invoice_item_id',v_invoice_item,
+          'product_id',v_sale_product,'quantity',1,'unit_id','pcs','unit_price',999)))
+    );
+    SELECT total_amount INTO v_total FROM public.sales_returns
+      WHERE id='91000000-0000-4000-8000-000000000001';
+    SELECT current_debt,credit_balance INTO v_debt,v_credit
+      FROM public.customers WHERE id=v_customer;
+    SELECT count(*) INTO v_payments_after FROM public.customer_payments WHERE customer_id=v_customer;
+    IF v_total IS DISTINCT FROM 50 OR v_debt IS DISTINCT FROM 0 OR v_credit IS DISTINCT FROM 50
+       OR v_payments_after IS DISTINCT FROM v_payments_before THEN
+      RAISE EXCEPTION 'Sale return credit mismatch: total %, debt %, credit %, payments before/after %/%',
+        v_total,v_debt,v_credit,v_payments_before,v_payments_after;
+    END IF;
+
+    -- Replaying the same sale return must not duplicate stock or customer credit.
+    v_result:=public.process_sale_return(
+      v_store,'60000000-0000-4000-8000-000000000009',
+      jsonb_build_object('id','91000000-0000-4000-8000-000000000001',
+        'invoice_id',v_invoice,'return_number','PH2-SRET-001','refund_method','CREDIT',
+        'return_condition','GOOD',
+        'items',jsonb_build_array(jsonb_build_object('invoice_item_id',v_invoice_item,
+          'product_id',v_sale_product,'quantity',1,'unit_id','pcs','unit_price',999)))
+    );
+    IF (v_result->>'replayed')::boolean IS DISTINCT FROM TRUE THEN
+      RAISE EXCEPTION 'Sale return retry was not idempotent';
+    END IF;
+    SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_sale_product AND location_id='main';
+    IF v_stock IS DISTINCT FROM 20 THEN RAISE EXCEPTION 'Sale return stock mismatch: %',v_stock; END IF;
+
+    -- A second return of the already-returned sold quantity must be rejected.
+    BEGIN
+      PERFORM public.process_sale_return(
+        v_store,'60000000-0000-4000-8000-000000000010',
+        jsonb_build_object('id','91000000-0000-4000-8000-000000000002',
+          'invoice_id',v_invoice,'return_number','PH2-SRET-002',
+          'items',jsonb_build_array(jsonb_build_object('invoice_item_id',v_invoice_item,
+            'product_id',v_sale_product,'quantity',1,'unit_id','pcs')))
+      );
+      RAISE EXCEPTION 'Over-return unexpectedly succeeded';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+
+    -- Purchase return is limited to quantities received on the exact purchase line.
+    v_result:=public.process_purchase_return(
+      v_store,'60000000-0000-4000-8000-000000000011',
+      jsonb_build_object('id','92000000-0000-4000-8000-000000000001',
+        'purchase_id','70000000-0000-4000-8000-000000000003',
+        'return_number','PH2-PRET-001','refund_method','CREDIT',
+        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',
+          '71000000-0000-4000-8000-000000000003','product_id',v_purchase_product,
+          'quantity',2,'unit_id','pcs','unit_price',0)))
+    );
+    SELECT total_amount INTO v_total FROM public.purchase_returns
+      WHERE id='92000000-0000-4000-8000-000000000001';
+    SELECT quantity INTO v_stock FROM public.stock
+      WHERE product_id=v_purchase_product AND location_id='main';
+    SELECT current_debt,credit_balance INTO v_debt,v_credit
+      FROM public.suppliers WHERE id=v_supplier;
+    IF v_total IS DISTINCT FROM 60 OR v_stock IS DISTINCT FROM 18
+       OR v_debt IS DISTINCT FROM 540 OR v_credit IS DISTINCT FROM 0 THEN
+      RAISE EXCEPTION 'Purchase return mismatch: total %, stock %, supplier debt %, credit %',
+        v_total,v_stock,v_debt,v_credit;
+    END IF;
+
+    BEGIN
+      PERFORM public.process_purchase_return(
+        v_store,'60000000-0000-4000-8000-000000000012',
+        jsonb_build_object('id','92000000-0000-4000-8000-000000000002',
+          'purchase_id','70000000-0000-4000-8000-000000000003',
+          'return_number','PH2-PRET-002',
+          'items',jsonb_build_array(jsonb_build_object('purchase_item_id',
+            '71000000-0000-4000-8000-000000000003','product_id',v_purchase_product,
+            'quantity',9,'unit_id','pcs')))
+      );
+      RAISE EXCEPTION 'Purchase over-return unexpectedly succeeded';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+
+    RAISE NOTICE 'PASS: sale return source-line cap, original price, customer credit, no cash payout, purchase received-quantity cap and supplier ledger';
+END
+&returns_regression$;
