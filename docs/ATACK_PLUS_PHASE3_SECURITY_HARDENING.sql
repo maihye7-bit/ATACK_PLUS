@@ -36,7 +36,7 @@ BEGIN
     EXECUTE format('CREATE POLICY %I ON public.%I AS RESTRICTIVE FOR UPDATE TO authenticated USING (false) WITH CHECK (false)','sec_deny_direct_update_'||t,t);
     EXECUTE format('CREATE POLICY %I ON public.%I AS RESTRICTIVE FOR DELETE TO authenticated USING (false)','sec_deny_direct_delete_'||t,t);
 
-    EXECUTE format('REVOKE ALL ON TABLE public.%I FROM anon, authenticated',t);
+    EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated',t);
     EXECUTE format('GRANT SELECT ON TABLE public.%I TO authenticated',t);
   END LOOP;
 END
