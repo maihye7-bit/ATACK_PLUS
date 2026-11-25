@@ -12,7 +12,7 @@ STORE_B="b1000000-0000-4000-8000-000000000002"
 PRODUCT_A="a2000000-0000-4000-8000-000000000001"
 PRODUCT_B="b2000000-0000-4000-8000-000000000002"
 USER_A="a3000000-0000-4000-8000-000000000001"
-CASHIER_USER="a3000000-0000-4000-8000-000000000003"
+SELLER_USER="a3000000-0000-4000-8000-000000000003"
 STORE_B_USER="b3000000-0000-4000-8000-000000000003"
 SUPPLIER_A="a4000000-0000-4000-8000-000000000001"
 PURCHASE_ID="a6000000-0000-4000-8000-000000000001"
@@ -56,16 +56,16 @@ signup_identity() {
 
 echo "Creating real Supabase Auth identities for the store owner and sellers..."
 OWNER_RESPONSE="$(signup_identity owner)"
-CASHIER_RESPONSE="$(signup_identity seller)"
+SELLER_RESPONSE="$(signup_identity seller)"
 AUTH_USER_ID="$(jq -er '.user.id' <<<"${OWNER_RESPONSE}")"
 OWNER_TOKEN="$(jq -er '.access_token' <<<"${OWNER_RESPONSE}")"
-CASHIER_AUTH_ID="$(jq -er '.user.id' <<<"${CASHIER_RESPONSE}")"
-CASHIER_TOKEN="$(jq -er '.access_token' <<<"${CASHIER_RESPONSE}")"
+SELLER_AUTH_ID="$(jq -er '.user.id' <<<"${SELLER_RESPONSE}")"
+SELLER_TOKEN="$(jq -er '.access_token' <<<"${SELLER_RESPONSE}")"
 
 echo "Seeding isolated stores, real Auth-backed role fixtures and inventory..."
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v auth_user_id="$AUTH_USER_ID" -v user_a="$USER_A" \
-  -v cashier_auth_id="$CASHIER_AUTH_ID" -v cashier_user="$CASHIER_USER" \
+  -v seller_auth_id="$SELLER_AUTH_ID" -v seller_user="$SELLER_USER" \
   -v store_a="$STORE_A" -v store_b="$STORE_B" \
   -v product_a="$PRODUCT_A" -v product_b="$PRODUCT_B" \
   -v store_b_user="$STORE_B_USER" -v supplier_a="$SUPPLIER_A" \
@@ -77,13 +77,13 @@ INSERT INTO public.stores(id,name) VALUES
 INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
 VALUES
  (:'user_a'::uuid,:'auth_user_id'::uuid,:'store_a'::uuid,'auth-smoke-owner','Auth Smoke Store Owner',TRUE),
- (:'cashier_user'::uuid,:'cashier_auth_id'::uuid,:'store_a'::uuid,'auth-smoke-seller','Auth Smoke Seller',TRUE),
+ (:'seller_user'::uuid,:'seller_auth_id'::uuid,:'store_a'::uuid,'auth-smoke-seller','Auth Smoke Seller',TRUE),
  (:'store_b_user'::uuid,'b4000000-0000-4000-8000-000000000003',:'store_b'::uuid,'auth-smoke-store-b','Other Store Seller',TRUE);
 
 INSERT INTO public.user_roles(user_id,role_id)
 VALUES
  (:'user_a'::uuid,'owner'),
- (:'cashier_user'::uuid,'cashier'),
+ (:'seller_user'::uuid,'cashier'),
  (:'store_b_user'::uuid,'cashier');
 
 INSERT INTO public.suppliers(id,store_id,code,name,is_active)
@@ -166,21 +166,21 @@ if [[ "${ACTUAL_IDS}" != "${EXPECTED_IDS}" ]]; then
 fi
 
 echo "Verifying owner/seller role boundaries with real Auth JWTs..."
-expect_rpc_error "seller attempting to grant owner role" "${CASHIER_TOKEN}" "manage_store_user_role" \
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"owner",p_action:"GRANT"}')" "P0001"
-expect_rpc_error "seller managing user roles" "${CASHIER_TOKEN}" "manage_store_user_role" \
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')" "P0001"
+expect_rpc_error "seller attempting to grant owner role" "${SELLER_TOKEN}" "manage_store_user_role" \
+  "$(jq -nc --arg user "${SELLER_USER}" '{p_target_user_id:$user,p_role_id:"owner",p_action:"GRANT"}')" "P0001"
+expect_rpc_error "seller managing user roles" "${SELLER_TOKEN}" "manage_store_user_role" \
+  "$(jq -nc --arg user "${SELLER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')" "P0001"
 expect_rpc_error "owner managing a user from another store" "${OWNER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${STORE_B_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')" "P0001"
 expect_rpc_error "NULL role-management action" "${OWNER_TOKEN}" "manage_store_user_role" \
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:null}')" "P0001"
+  "$(jq -nc --arg user "${SELLER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:null}')" "P0001"
 echo "Verifying business RPC permission boundaries and a successful seller sale..."
 SALE_PAYLOAD="$(jq -nc --arg id "${SALE_ID}" --arg item "${SALE_ITEM_ID}" --arg product "${PRODUCT_A}" --arg customer "${CUSTOMER_A}" \
   --arg number "AUTH-RPC-${GITHUB_RUN_ID:-local}" \
   '{id:$id,invoice_number:$number,customer_id:$customer,paid_amount:5,payment_method:"CASH",items:[{id:$item,product_id:$product,quantity:1,unit_id:"pcs",unit_price:5,discount_amount:0}]}')"
 SALE_ARGS="$(jq -nc --arg store "${STORE_A}" --arg op "${SALE_OPERATION}" --argjson payload "${SALE_PAYLOAD}" \
   '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-SALE_RESULT="$(rpc_call "${CASHIER_TOKEN}" "process_sale_invoice" "${SALE_ARGS}")"
+SALE_RESULT="$(rpc_call "${SELLER_TOKEN}" "process_sale_invoice" "${SALE_ARGS}")"
 if [[ "$(jq -r '.success' <<<"${SALE_RESULT}")" != "true" ]]; then
   echo "Seller's permitted sale RPC did not succeed: ${SALE_RESULT}" >&2
   exit 1
@@ -221,13 +221,13 @@ SQL
 echo "Verifying owner-controlled purchasing, inventory, returns and accounting via real JWT RPCs..."
 PURCHASE_PAYLOAD="$(jq -nc --arg id "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" --arg supplier "$SUPPLIER_A" --arg product "$PRODUCT_A" --arg number "AUTH-PUR-$GITHUB_RUN_ID" '{id:$id,purchase_number:$number,supplier_id:$supplier,paid_amount:0,items:[{id:$item,product_id:$product,quantity:4,received_quantity:0,unit_id:"pcs",unit_price:12,cost_per_unit:12}]}')"
 PURCHASE_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_OPERATION" --argjson payload "$PURCHASE_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "seller creating a purchase" "$CASHIER_TOKEN" "process_purchase" "$PURCHASE_ARGS"
+expect_rpc_denied "seller creating a purchase" "$SELLER_TOKEN" "process_purchase" "$PURCHASE_ARGS"
 PURCHASE_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase" "$PURCHASE_ARGS")"
 [[ "$(jq -r '.success' <<<"$PURCHASE_RESULT")" == "true" ]] || { echo "Purchase creation failed: $PURCHASE_RESULT" >&2; exit 1; }
 
 RECEIPT_PAYLOAD="$(jq -nc --arg id "$RECEIPT_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" '{id:$id,purchase_id:$purchase,items:[{purchase_item_id:$item,accepted_quantity:3,rejected_quantity:1,rejection_reason:"Damaged packaging"}]}')"
 RECEIPT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$RECEIPT_OPERATION" --argjson payload "$RECEIPT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "seller receiving a purchase" "$CASHIER_TOKEN" "process_purchase_receipt" "$RECEIPT_ARGS"
+expect_rpc_denied "seller receiving a purchase" "$SELLER_TOKEN" "process_purchase_receipt" "$RECEIPT_ARGS"
 RECEIPT_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase_receipt" "$RECEIPT_ARGS")"
 [[ "$(jq -r '.success' <<<"$RECEIPT_RESULT")" == "true" ]] || { echo "Partial receipt failed: $RECEIPT_RESULT" >&2; exit 1; }
 REPLAY_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase_receipt" "$RECEIPT_ARGS")"
@@ -239,20 +239,20 @@ expect_rpc_error "receipt beyond outstanding quantity" "$OWNER_TOKEN" "process_p
 
 PURCHASE_RETURN_PAYLOAD="$(jq -nc --arg id "$PURCHASE_RETURN_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" --arg product "$PRODUCT_A" '{id:$id,purchase_id:$purchase,return_number:"AUTH-PRET-001",refund_method:"CREDIT",items:[{purchase_item_id:$item,product_id:$product,quantity:1,unit_id:"pcs"}]}')"
 PURCHASE_RETURN_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_RETURN_OPERATION" --argjson payload "$PURCHASE_RETURN_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "seller processing supplier return" "$CASHIER_TOKEN" "process_purchase_return" "$PURCHASE_RETURN_ARGS"
+expect_rpc_denied "seller processing supplier return" "$SELLER_TOKEN" "process_purchase_return" "$PURCHASE_RETURN_ARGS"
 PURCHASE_RETURN_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase_return" "$PURCHASE_RETURN_ARGS")"
 [[ "$(jq -r '.success' <<<"$PURCHASE_RETURN_RESULT")" == "true" ]] || { echo "Purchase return failed: $PURCHASE_RETURN_RESULT" >&2; exit 1; }
 expect_rpc_denied "purchase return against another store" "$OWNER_TOKEN" "process_purchase_return" "$(jq -nc --arg op "b6000000-0000-4000-8000-000000000014" --argjson payload "$PURCHASE_RETURN_PAYLOAD" '{p_store_id:"b1000000-0000-4000-8000-000000000002",p_operation_id:$op,p_payload:$payload}')"
 
 ADJUSTMENT_PAYLOAD="$(jq -nc --arg id "$ADJUSTMENT_ID" --arg product "$PRODUCT_A" '{id:$id,product_id:$product,adjustment_type:"INCREASE",reason:"Authenticated stock count correction",quantity:1,unit_id:"pcs",cost_per_unit:12,location_id:"main"}')"
 ADJUSTMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$ADJUSTMENT_OPERATION" --argjson payload "$ADJUSTMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "seller privileged stock adjustment" "$CASHIER_TOKEN" "process_stock_adjustment" "$ADJUSTMENT_ARGS"
+expect_rpc_denied "seller privileged stock adjustment" "$SELLER_TOKEN" "process_stock_adjustment" "$ADJUSTMENT_ARGS"
 ADJUSTMENT_RESULT="$(rpc_call "$OWNER_TOKEN" "process_stock_adjustment" "$ADJUSTMENT_ARGS")"
 [[ "$(jq -r '.success' <<<"$ADJUSTMENT_RESULT")" == "true" ]] || { echo "Stock adjustment failed: $ADJUSTMENT_RESULT" >&2; exit 1; }
 
 SALE_RETURN_PAYLOAD="$(jq -nc --arg id "$SALE_RETURN_ID" --arg invoice "$SALE_ID" --arg product "$PRODUCT_A" --arg item "$SALE_ITEM_ID" '{id:$id,invoice_id:$invoice,return_number:"AUTH-SRET-001",refund_method:"CREDIT",items:[{invoice_item_id:$item,product_id:$product,quantity:1,unit_id:"pcs"}]}')"
 SALE_RETURN_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SALE_RETURN_OPERATION" --argjson payload "$SALE_RETURN_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-SALE_RETURN_RESULT="$(rpc_call "$CASHIER_TOKEN" "process_sale_return" "$SALE_RETURN_ARGS")"
+SALE_RETURN_RESULT="$(rpc_call "$SELLER_TOKEN" "process_sale_return" "$SALE_RETURN_ARGS")"
 [[ "$(jq -r '.success' <<<"$SALE_RETURN_RESULT")" == "true" ]] || { echo "Sale return failed: $SALE_RETURN_RESULT" >&2; exit 1; }
 
 expect_rpc_denied "purchase creation for another store" "$OWNER_TOKEN" "process_purchase" "$(jq -nc --arg op "b6000000-0000-4000-8000-000000000015" --argjson payload "$PURCHASE_PAYLOAD" '{p_store_id:"b1000000-0000-4000-8000-000000000002",p_operation_id:$op,p_payload:$payload}')"
@@ -264,13 +264,13 @@ expect_rpc_error "amendment below received plus returned quantity" "$OWNER_TOKEN
 
 AMENDMENT_PAYLOAD="$(jq -nc --arg id "$PURCHASE_AMENDMENT_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" '{id:$id,purchase_id:$purchase,reason:"Approved post-receipt price and quantity amendment",items:[{purchase_item_id:$item,quantity:5,unit_price:13,cost_per_unit:13}]}')"
 AMENDMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_AMENDMENT_OPERATION" --argjson payload "$AMENDMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "seller amending a received purchase" "$CASHIER_TOKEN" "process_purchase_amendment" "$AMENDMENT_ARGS"
+expect_rpc_denied "seller amending a received purchase" "$SELLER_TOKEN" "process_purchase_amendment" "$AMENDMENT_ARGS"
 AMENDMENT_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase_amendment" "$AMENDMENT_ARGS")"
 [[ "$(jq -r '.success' <<<"$AMENDMENT_RESULT")" == "true" ]] || { echo "Purchase amendment failed: $AMENDMENT_RESULT" >&2; exit 1; }
 
 CLOSURE_PAYLOAD="$(jq -nc --arg id "$PURCHASE_CLOSURE_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" '{id:$id,purchase_id:$purchase,reason:"Supplier confirmed remaining quantity cannot be delivered",items:[{purchase_item_id:$item,quantity:2,reason:"Supplier out of stock"}]}')"
 CLOSURE_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_CLOSURE_OPERATION" --argjson payload "$CLOSURE_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "seller closing unreceived purchase quantity" "$CASHIER_TOKEN" "process_purchase_close_remaining" "$CLOSURE_ARGS"
+expect_rpc_denied "seller closing unreceived purchase quantity" "$SELLER_TOKEN" "process_purchase_close_remaining" "$CLOSURE_ARGS"
 STOCK_BEFORE_CLOSURE="$(psql "$DB_URL" -Atqc "SELECT quantity FROM public.stock WHERE product_id='${PRODUCT_A}'::uuid AND location_id='main'")"
 CLOSURE_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase_close_remaining" "$CLOSURE_ARGS")"
 [[ "$(jq -r '.success' <<<"$CLOSURE_RESULT")" == "true" ]] || { echo "Purchase closure failed: $CLOSURE_RESULT" >&2; exit 1; }
@@ -280,19 +280,19 @@ STOCK_AFTER_CLOSURE="$(psql "$DB_URL" -Atqc "SELECT quantity FROM public.stock W
 echo "Verifying customer and supplier payment RPCs and accounting journals..."
 CUSTOMER_SALE_PAYLOAD="$(jq -nc --arg id "$CUSTOMER_SALE_ID" --arg item "$CUSTOMER_SALE_ITEM_ID" --arg product "$PRODUCT_A" --arg customer "$CUSTOMER_A" --arg number "AUTH-CUST-SALE-$GITHUB_RUN_ID" '{id:$id,invoice_number:$number,customer_id:$customer,paid_amount:0,payment_method:"CASH",items:[{id:$item,product_id:$product,quantity:1,unit_id:"pcs",unit_price:8,discount_amount:0}]}')"
 CUSTOMER_SALE_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$CUSTOMER_SALE_OPERATION" --argjson payload "$CUSTOMER_SALE_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-CUSTOMER_SALE_RESULT="$(rpc_call "$CASHIER_TOKEN" "process_sale_invoice" "$CUSTOMER_SALE_ARGS")"
+CUSTOMER_SALE_RESULT="$(rpc_call "$SELLER_TOKEN" "process_sale_invoice" "$CUSTOMER_SALE_ARGS")"
 [[ "$(jq -r '.success' <<<"$CUSTOMER_SALE_RESULT")" == "true" ]] || { echo "Unpaid customer sale failed: $CUSTOMER_SALE_RESULT" >&2; exit 1; }
 
 CUSTOMER_PAYMENT_PAYLOAD="$(jq -nc --arg id "$CUSTOMER_PAYMENT_ID" --arg customer "$CUSTOMER_A" '{id:$id,customer_id:$customer,amount:3,payment_method:"CARD"}')"
 CUSTOMER_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$CUSTOMER_PAYMENT_OPERATION" --argjson payload "$CUSTOMER_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-CUSTOMER_PAYMENT_RESULT="$(rpc_call "$CASHIER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
+CUSTOMER_PAYMENT_RESULT="$(rpc_call "$SELLER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
 [[ "$(jq -r '.success' <<<"$CUSTOMER_PAYMENT_RESULT")" == "true" ]] || { echo "Customer payment failed: $CUSTOMER_PAYMENT_RESULT" >&2; exit 1; }
-CUSTOMER_PAYMENT_REPLAY="$(rpc_call "$CASHIER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
+CUSTOMER_PAYMENT_REPLAY="$(rpc_call "$SELLER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
 [[ "$(jq -r '.replayed' <<<"$CUSTOMER_PAYMENT_REPLAY")" == "true" ]] || { echo "Customer payment replay was not idempotent: $CUSTOMER_PAYMENT_REPLAY" >&2; exit 1; }
 
 SUPPLIER_PAYMENT_PAYLOAD="$(jq -nc --arg id "$SUPPLIER_PAYMENT_ID" --arg supplier "$SUPPLIER_A" '{id:$id,supplier_id:$supplier,amount:5,payment_method:"BANK_TRANSFER"}')"
 SUPPLIER_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SUPPLIER_PAYMENT_OPERATION" --argjson payload "$SUPPLIER_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "seller paying a supplier" "$CASHIER_TOKEN" "process_supplier_payment" "$SUPPLIER_PAYMENT_ARGS"
+expect_rpc_denied "seller paying a supplier" "$SELLER_TOKEN" "process_supplier_payment" "$SUPPLIER_PAYMENT_ARGS"
 SUPPLIER_PAYMENT_RESULT="$(rpc_call "$OWNER_TOKEN" "process_supplier_payment" "$SUPPLIER_PAYMENT_ARGS")"
 [[ "$(jq -r '.success' <<<"$SUPPLIER_PAYMENT_RESULT")" == "true" ]] || { echo "Supplier payment failed: $SUPPLIER_PAYMENT_RESULT" >&2; exit 1; }
 SUPPLIER_PAYMENT_REPLAY="$(rpc_call "$OWNER_TOKEN" "process_supplier_payment" "$SUPPLIER_PAYMENT_ARGS")"
@@ -374,15 +374,15 @@ if [[ "${WRITE_STATUS}" != "403" ]] || [[ "$(jq -r '.code // empty' /tmp/journal
 fi
 
 echo "Verifying real JWT owner/seller read boundaries through PostgREST..."
-CASHIER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
-CASHIER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
-CASHIER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
-CASHIER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
-[[ "$(jq 'length' <<<"${CASHIER_INVOICES}")" -gt 0 ]] || { echo "Seller cannot read own-store invoices"; exit 1; }
-[[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${CASHIER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${CASHIER_INVOICES}")" == "true" ]] || { echo "Seller sale invoice is not attributed to the authenticated seller"; exit 1; }
-[[ "$(jq 'length' <<<"${CASHIER_PURCHASES}")" -eq 0 ]] || { echo "Seller read purchases without purchases.read"; exit 1; }
-[[ "$(jq 'length' <<<"${CASHIER_JOURNALS}")" -eq 0 ]] || { echo "Seller read financial journals without reports.financial"; exit 1; }
-[[ "$(jq 'length' <<<"${CASHIER_PROFILES}")" -eq 1 && "$(jq -r '.[0].id' <<<"${CASHIER_PROFILES}")" == "${CASHIER_USER}" ]] || { echo "Seller profile read is not restricted to the caller's own profile"; exit 1; }
+SELLER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+SELLER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+SELLER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+SELLER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+[[ "$(jq 'length' <<<"${SELLER_INVOICES}")" -gt 0 ]] || { echo "Seller cannot read own-store invoices"; exit 1; }
+[[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${SELLER_INVOICES}")" == "true" ]] || { echo "Seller sale invoice is not attributed to the authenticated seller"; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_PURCHASES}")" -eq 0 ]] || { echo "Seller read purchases without purchases.read"; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_JOURNALS}")" -eq 0 ]] || { echo "Seller read financial journals without reports.financial"; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_PROFILES}")" -eq 1 && "$(jq -r '.[0].id' <<<"${SELLER_PROFILES}")" == "${SELLER_USER}" ]] || { echo "Seller profile read is not restricted to the caller's own profile"; exit 1; }
 
 
 OWNER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
@@ -393,7 +393,7 @@ OWNER_CHART="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/c
 OWNER_LEDGER="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/general_ledger?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 OWNER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 [[ "$(jq 'length' <<<"${OWNER_INVOICES}")" -gt 0 && "$(jq 'length' <<<"${OWNER_PURCHASES}")" -gt 0 ]] || { echo "Owner cannot read store sales and purchases"; exit 1; }
-[[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${CASHIER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${OWNER_INVOICES}")" == "true" ]] || { echo "Owner cannot see the seller-attributed invoice"; exit 1; }
+[[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${OWNER_INVOICES}")" == "true" ]] || { echo "Owner cannot see the seller-attributed invoice"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_JOURNALS}")" -gt 0 && "$(jq 'length' <<<"${OWNER_CHART}")" -gt 0 && "$(jq 'length' <<<"${OWNER_LEDGER}")" -gt 0 ]] || { echo "Owner cannot read complete store accounting records"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_STOCK}")" -gt 0 ]] || { echo "Owner cannot read store inventory"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_PROFILES}")" -eq 2 ]] || { echo "Owner cannot see all users in own store, or cross-store user isolation failed"; exit 1; }
