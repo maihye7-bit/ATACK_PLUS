@@ -763,6 +763,15 @@ HAVING COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
 ORDER BY coa.store_id,coa.account_code;
 
 GRANT SELECT ON public.v_trial_balance,public.v_balance_sheet,public.v_income_statement TO authenticated;
+REVOKE ALL ON FUNCTION public.process_sale_invoice(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_purchase(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_customer_payment(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_supplier_payment(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_sale_return(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_purchase_return(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_purchase_receipt(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_purchase_amendment(UUID,UUID,JSONB) FROM PUBLIC,anon;
+REVOKE ALL ON FUNCTION public.process_purchase_close_remaining(UUID,UUID,JSONB) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.process_sale_invoice(UUID,UUID,JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.process_purchase(UUID,UUID,JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.process_customer_payment(UUID,UUID,JSONB) TO authenticated;
