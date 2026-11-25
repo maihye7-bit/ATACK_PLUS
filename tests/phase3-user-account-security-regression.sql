@@ -30,7 +30,7 @@ DECLARE v_user UUID; denied BOOLEAN:=FALSE; v_auth UUID; v_name TEXT; v_active B
 BEGIN
   v_user:=public.create_store_user_profile(
     '20000000-0000-4000-8000-000000000009',
-    'managed_cashier','Managed Cashier','cashier','cashier@example.test','0555000009'
+    'managed_seller','Managed Seller','cashier','seller@example.test','0555000009'
   );
   IF NOT EXISTS(SELECT 1 FROM public.users WHERE id=v_user
       AND store_id='10000000-0000-4000-8000-000000000001'
@@ -41,12 +41,12 @@ BEGIN
   END IF;
 
   PERFORM public.update_store_user_profile(
-    v_user,'Managed Cashier Updated','cashier-updated@example.test','0555000010',TRUE
+    v_user,'Managed Seller Updated','seller-updated@example.test','0555000010',TRUE
   );
   SELECT auth_user_id,full_name,is_active INTO v_auth,v_name,v_active
     FROM public.users WHERE id=v_user;
   IF v_auth IS DISTINCT FROM '20000000-0000-4000-8000-000000000009'::UUID
-     OR v_name IS DISTINCT FROM 'Managed Cashier Updated' OR v_active IS NOT TRUE THEN
+     OR v_name IS DISTINCT FROM 'Managed Seller Updated' OR v_active IS NOT TRUE THEN
     RAISE EXCEPTION 'Profile update changed protected identity or failed to persist';
   END IF;
 
@@ -101,22 +101,22 @@ ROLLBACK;
 BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000005',TRUE);
 SET LOCAL ROLE authenticated;
-DO $admin_user_limits$
-DECLARE denied BOOLEAN:=FALSE; v_error TEXT;
+DO $seller_user_limits$
+DECLARE denied BOOLEAN:=FALSE; v_error TEXT; v_owner_active BOOLEAN;
 BEGIN
   BEGIN
     PERFORM public.create_store_user_profile(
       '20000000-0000-4000-8000-000000000010',
-      'admin_cannot_create_owner','Admin Cannot Create Owner','owner',NULL,NULL
+      'seller_cannot_create_owner','Seller Cannot Create Owner','owner',NULL,NULL
     );
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
     GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
-    IF v_error NOT LIKE '%Cannot manage a role containing permissions the caller does not hold%' THEN RAISE; END IF;
+    IF v_error NOT LIKE '%users.manage permission required%' THEN RAISE; END IF;
     denied:=TRUE;
   END;
-  IF NOT denied THEN RAISE EXCEPTION 'Admin created a user with owner-level permissions'; END IF;
+  IF NOT denied THEN RAISE EXCEPTION 'Seller created a user with owner-level permissions'; END IF;
   IF EXISTS(SELECT 1 FROM public.users WHERE auth_user_id='20000000-0000-4000-8000-000000000010') THEN
-    RAISE EXCEPTION 'Failed elevated-role provisioning left a partial user row';
+    RAISE EXCEPTION 'Denied seller provisioning left a partial user row';
   END IF;
 
   denied:=FALSE;
@@ -127,11 +127,14 @@ BEGIN
     );
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
     GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
-    IF v_error NOT LIKE '%Cannot deactivate a user holding permissions the caller does not hold%' THEN RAISE; END IF;
+    IF v_error NOT LIKE '%users.manage permission required%' THEN RAISE; END IF;
     denied:=TRUE;
   END;
-  IF NOT denied THEN RAISE EXCEPTION 'Admin deactivated an owner holding permissions it does not have'; END IF;
-  RAISE NOTICE 'PASS: admin cannot provision elevated owner role or deactivate a more-privileged owner';
+  IF NOT denied THEN RAISE EXCEPTION 'Seller deactivated or modified the owner account'; END IF;
+  SELECT is_active INTO v_owner_active FROM public.users
+   WHERE id='30000000-0000-4000-8000-000000000001';
+  IF v_owner_active IS NOT TRUE THEN RAISE EXCEPTION 'Owner account was unexpectedly deactivated'; END IF;
+  RAISE NOTICE 'PASS: seller cannot provision users or manage the owner account';
 END
-$admin_user_limits$;
+$seller_user_limits$;
 ROLLBACK;
