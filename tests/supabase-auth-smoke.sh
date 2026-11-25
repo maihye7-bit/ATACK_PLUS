@@ -174,18 +174,18 @@ if [[ "${ACTUAL_IDS}" != "${EXPECTED_IDS}" ]]; then
 fi
 
 echo "Verifying RPC role boundaries with real Auth JWTs..."
-expect_rpc_error "admin granting owner role" "${ADMIN_TOKEN}" "manage_store_user_role" \ "P0001"
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"owner",p_action:"GRANT"}')"
+expect_rpc_error "admin granting owner role" "${ADMIN_TOKEN}" "manage_store_user_role" \
+  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"owner",p_action:"GRANT"}')" "P0001"
 rpc_call "${ADMIN_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"GRANT"}')" >/dev/null
 rpc_call "${ADMIN_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"REVOKE"}')" >/dev/null
-expect_rpc_error "cashier managing user roles" "${CASHIER_TOKEN}" "manage_store_user_role" \ "P0001"
-  "$(jq -nc --arg user "${STOCK_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')"
-expect_rpc_error "admin managing a user from another store" "${ADMIN_TOKEN}" "manage_store_user_role" \ "P0001"
-  "$(jq -nc --arg user "${STORE_B_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')"
-expect_rpc_error "NULL role-management action" "${ADMIN_TOKEN}" "manage_store_user_role" \ "P0001"
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:null}')"
+expect_rpc_error "cashier managing user roles" "${CASHIER_TOKEN}" "manage_store_user_role" \
+  "$(jq -nc --arg user "${STOCK_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')" "P0001"
+expect_rpc_error "admin managing a user from another store" "${ADMIN_TOKEN}" "manage_store_user_role" \
+  "$(jq -nc --arg user "${STORE_B_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')" "P0001"
+expect_rpc_error "NULL role-management action" "${ADMIN_TOKEN}" "manage_store_user_role" \
+  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:null}')" "P0001"
 rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"admin",p_action:"GRANT"}')" >/dev/null
 rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
