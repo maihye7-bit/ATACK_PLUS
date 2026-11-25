@@ -136,6 +136,9 @@ BEGIN
  INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
  VALUES(v_supplier,'RETURN',-v_total,(v_supplier_debt-v_applied)-(v_supplier_credit+v_new_credit),
    v_return_id,'Purchase return '||v_return_number,v_user);
+ UPDATE public.purchase_returns
+    SET applied_to_debt=v_applied,supplier_credit_created=v_new_credit
+  WHERE id=v_return_id;
  RETURN jsonb_build_object('success',TRUE,'replayed',FALSE,'return_id',v_return_id,'total_amount',v_total);
 END;
 $purchase_return_v2$;
