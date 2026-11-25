@@ -186,6 +186,9 @@ BEGIN
       VALUES(v_customer,'RETURN',-v_total,
         (v_customer_debt-v_applied)-(v_customer_credit+v_new_credit),
         v_return_id,'Sale return '||v_return_number,v_user);
+      UPDATE public.sales_returns
+         SET applied_to_debt=v_applied,customer_credit_created=v_new_credit
+       WHERE id=v_return_id;
     END IF;
 
     RETURN jsonb_build_object('success',TRUE,'replayed',FALSE,'return_id',v_return_id,'total_amount',v_total);
