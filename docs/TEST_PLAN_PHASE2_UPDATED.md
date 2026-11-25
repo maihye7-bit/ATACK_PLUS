@@ -174,7 +174,7 @@ flutter build windows --release
 
 ## 10. نتائج الاختبارات المنفذة فعلياً — GitHub Actions
 
-<text>Workflow run: `45582736861` — النتيجة: `success` — PostgreSQL `16.16` — فرع `repair/verified-fixes`.</text>
+Workflow run: `45582736861` — النتيجة: `success` — PostgreSQL `16.16` — فرع `repair/verified-fixes`.
 
 | مجموعة الاختبار | النتيجة الفعلية |
 |---|---|
