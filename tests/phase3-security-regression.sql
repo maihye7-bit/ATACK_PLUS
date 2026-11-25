@@ -5,14 +5,14 @@ VALUES ('10000000-0000-4000-8000-000000000002','Phase 3 Security Store B')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
-VALUES ('30000000-0000-4000-8000-000000000002',
-        '20000000-0000-4000-8000-000000000002',
+VALUES ('99000000-0000-4000-8000-000000000099',
+        '99000000-0000-4000-8000-000000000098',
         '10000000-0000-4000-8000-000000000002',
         'phase3_security_user_b','Phase 3 Security User B',TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.user_roles(user_id,role_id)
-VALUES ('30000000-0000-4000-8000-000000000002','owner')
+VALUES ('99000000-0000-4000-8000-000000000099','owner')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO public.chart_of_accounts(id,store_id,account_code,account_name,account_type)
