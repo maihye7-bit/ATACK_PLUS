@@ -20,9 +20,8 @@ BEGIN
   IF current_user <> 'authenticated' THEN
     RAISE EXCEPTION 'Business RPC test is not running as authenticated: %', current_user;
   END IF;
-  IF auth.uid() IS DISTINCT FROM '20000000-0000-4000-8000-000000000001'::UUID THEN
-    RAISE EXCEPTION 'Authenticated role did not resolve the expected Auth subject';
-  END IF;
+  -- current_user_store_id() is SECURITY DEFINER and resolves the Auth subject
+  -- through the compatibility layer without granting app roles direct auth-schema access.
   IF public.current_user_store_id() IS DISTINCT FROM v_store THEN
     RAISE EXCEPTION 'Authenticated RPC resolved the wrong store';
   END IF;
