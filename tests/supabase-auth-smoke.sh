@@ -100,6 +100,14 @@ VALUES
 INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
 VALUES (:'product_a'::uuid,'main',10,0);
 
+-- Owner-created sale proves sellers cannot read another user's invoice.
+INSERT INTO public.invoices(
+  id,store_id,invoice_number,type,invoice_date,total_amount,created_by
+) VALUES (
+  'a5000000-0000-4000-8000-000000000009',
+  :'store_a'::uuid,'AUTH-OWNER-PRIVATE-001','SALE',NOW(),0,:'user_a'::uuid
+);
+
 INSERT INTO public.devices(id,store_id,device_name,device_type)
 VALUES (:'sync_device_a'::uuid,:'store_a'::uuid,'Auth Smoke Sync Device','DESKTOP');
 
@@ -378,7 +386,8 @@ SELLER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/
 SELLER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 SELLER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 SELLER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
-[[ "$(jq 'length' <<<"${SELLER_INVOICES}")" -gt 0 ]] || { echo "Seller cannot read own-store invoices"; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_INVOICES}")" -eq 1 ]] || { echo "Seller can read another seller's invoice or cannot read their own"; exit 1; }
+[[ "$(jq -e --arg id "a5000000-0000-4000-8000-000000000009" 'any(.[]; .id==$id)' <<<"${SELLER_INVOICES}")" == "false" ]] || { echo "Seller can read the owner's private invoice"; exit 1; }
 [[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${SELLER_INVOICES}")" == "true" ]] || { echo "Seller sale invoice is not attributed to the authenticated seller"; exit 1; }
 [[ "$(jq 'length' <<<"${SELLER_PURCHASES}")" -eq 0 ]] || { echo "Seller read purchases without purchases.read"; exit 1; }
 [[ "$(jq 'length' <<<"${SELLER_JOURNALS}")" -eq 0 ]] || { echo "Seller read financial journals without reports.financial"; exit 1; }
@@ -393,7 +402,9 @@ OWNER_CHART="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/c
 OWNER_LEDGER="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/general_ledger?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 OWNER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 [[ "$(jq 'length' <<<"${OWNER_INVOICES}")" -gt 0 && "$(jq 'length' <<<"${OWNER_PURCHASES}")" -gt 0 ]] || { echo "Owner cannot read store sales and purchases"; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_INVOICES}")" -ge 2 ]] || { echo "Owner cannot see all store invoices"; exit 1; }
 [[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${OWNER_INVOICES}")" == "true" ]] || { echo "Owner cannot see the seller-attributed invoice"; exit 1; }
+[[ "$(jq -e --arg id "a5000000-0000-4000-8000-000000000009" 'any(.[]; .id==$id)' <<<"${OWNER_INVOICES}")" == "true" ]] || { echo "Owner cannot see their own invoice"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_JOURNALS}")" -gt 0 && "$(jq 'length' <<<"${OWNER_CHART}")" -gt 0 && "$(jq 'length' <<<"${OWNER_LEDGER}")" -gt 0 ]] || { echo "Owner cannot read complete store accounting records"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_STOCK}")" -gt 0 ]] || { echo "Owner cannot read store inventory"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_PROFILES}")" -eq 2 ]] || { echo "Owner cannot see all users in own store, or cross-store user isolation failed"; exit 1; }
