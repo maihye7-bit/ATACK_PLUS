@@ -16,6 +16,7 @@ OWNER_USER="a3000000-0000-4000-8000-000000000002"
 CASHIER_USER="a3000000-0000-4000-8000-000000000003"
 STOCK_USER="a3000000-0000-4000-8000-000000000004"
 STORE_B_USER="b3000000-0000-4000-8000-000000000003"
+ACCOUNTANT_USER="a3000000-0000-4000-8000-000000000005"
 SUPPLIER_A="a4000000-0000-4000-8000-000000000001"
 PURCHASE_ID="a6000000-0000-4000-8000-000000000001"
 PURCHASE_ITEM_ID="a6000000-0000-4000-8000-000000000002"
@@ -61,6 +62,7 @@ ADMIN_RESPONSE="$(signup_identity admin)"
 OWNER_RESPONSE="$(signup_identity owner)"
 CASHIER_RESPONSE="$(signup_identity cashier)"
 STOCK_RESPONSE="$(signup_identity stockkeeper)"
+ACCOUNTANT_RESPONSE="$(signup_identity accountant)"
 AUTH_USER_ID="$(jq -er '.user.id' <<<"${ADMIN_RESPONSE}")"
 ADMIN_TOKEN="$(jq -er '.access_token' <<<"${ADMIN_RESPONSE}")"
 OWNER_AUTH_ID="$(jq -er '.user.id' <<<"${OWNER_RESPONSE}")"
@@ -69,6 +71,8 @@ CASHIER_AUTH_ID="$(jq -er '.user.id' <<<"${CASHIER_RESPONSE}")"
 CASHIER_TOKEN="$(jq -er '.access_token' <<<"${CASHIER_RESPONSE}")"
 STOCK_AUTH_ID="$(jq -er '.user.id' <<<"${STOCK_RESPONSE}")"
 STOCK_TOKEN="$(jq -er '.access_token' <<<"${STOCK_RESPONSE}")"
+ACCOUNTANT_AUTH_ID="$(jq -er '.user.id' <<<"${ACCOUNTANT_RESPONSE}")"
+ACCOUNTANT_TOKEN="$(jq -er '.access_token' <<<"${ACCOUNTANT_RESPONSE}")"
 
 echo "Seeding isolated stores, real Auth-backed role fixtures and inventory..."
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
@@ -76,6 +80,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v owner_auth_id="$OWNER_AUTH_ID" -v owner_user="$OWNER_USER" \
   -v cashier_auth_id="$CASHIER_AUTH_ID" -v cashier_user="$CASHIER_USER" \
   -v stock_auth_id="$STOCK_AUTH_ID" -v stock_user="$STOCK_USER" \
+  -v accountant_auth_id="$ACCOUNTANT_AUTH_ID" -v accountant_user="$ACCOUNTANT_USER" \
   -v store_a="$STORE_A" -v store_b="$STORE_B" \
   -v product_a="$PRODUCT_A" -v product_b="$PRODUCT_B" \
   -v store_b_user="$STORE_B_USER" -v supplier_a="$SUPPLIER_A" \
@@ -90,6 +95,7 @@ VALUES
  (:'owner_user'::uuid,:'owner_auth_id'::uuid,:'store_a'::uuid,'auth-smoke-owner','Auth Smoke Owner',TRUE),
  (:'cashier_user'::uuid,:'cashier_auth_id'::uuid,:'store_a'::uuid,'auth-smoke-cashier','Auth Smoke Cashier',TRUE),
  (:'stock_user'::uuid,:'stock_auth_id'::uuid,:'store_a'::uuid,'auth-smoke-stock','Auth Smoke Stock Keeper',TRUE),
+ (:'accountant_user'::uuid,:'accountant_auth_id'::uuid,:'store_a'::uuid,'auth-smoke-accountant','Auth Smoke Accountant',TRUE),
  (:'store_b_user'::uuid,'b4000000-0000-4000-8000-000000000003',:'store_b'::uuid,'auth-smoke-store-b','Other Store User',TRUE);
 
 INSERT INTO public.user_roles(user_id,role_id)
@@ -98,6 +104,7 @@ VALUES
  (:'owner_user'::uuid,'owner'),
  (:'cashier_user'::uuid,'cashier'),
  (:'stock_user'::uuid,'stock_keeper'),
+ (:'accountant_user'::uuid,'accountant'),
  (:'store_b_user'::uuid,'cashier');
 
 INSERT INTO public.suppliers(id,store_id,code,name,is_active)
@@ -400,4 +407,27 @@ if [[ "${WRITE_STATUS}" != "403" ]] || [[ "$(jq -r '.code // empty' /tmp/journal
   exit 1
 fi
 
-echo "PASS: real Supabase Auth JWT role matrix, store isolation, role-management RPC, Push/Outbox RPCs, business RPC permissions and protected accounting writes"
+echo "Verifying real JWT RBAC read boundaries through PostgREST..."
+CASHIER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
+CASHIER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
+CASHIER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
+CASHIER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
+[[ "$(jq 'length' <<<"${CASHIER_INVOICES}")" -gt 0 ]] || { echo "Cashier cannot read own-store invoices"; exit 1; }
+[[ "$(jq 'length' <<<"${CASHIER_PURCHASES}")" -eq 0 ]] || { echo "Cashier read purchases without purchases.read"; exit 1; }
+[[ "$(jq 'length' <<<"${CASHIER_JOURNALS}")" -eq 0 ]] || { echo "Cashier read financial journals without reports.financial"; exit 1; }
+[[ "$(jq 'length' <<<"${CASHIER_PROFILES}")" -eq 1 && "$(jq -r '.[0].id' <<<"${CASHIER_PROFILES}")" == "${CASHIER_USER}" ]] || { echo "Cashier profile read is not restricted to the caller's own profile"; exit 1; }
+
+STOCK_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${STOCK_TOKEN}")"
+STOCK_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${STOCK_TOKEN}")"
+STOCK_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${STOCK_TOKEN}")"
+[[ "$(jq 'length' <<<"${STOCK_PURCHASES}")" -gt 0 ]] || { echo "Stock keeper cannot read own-store purchases"; exit 1; }
+[[ "$(jq 'length' <<<"${STOCK_INVOICES}")" -eq 0 ]] || { echo "Stock keeper read sales without sales.read"; exit 1; }
+[[ "$(jq 'length' <<<"${STOCK_JOURNALS}")" -eq 0 ]] || { echo "Stock keeper read financial journals without reports.financial"; exit 1; }
+
+ACCOUNTANT_CHART="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/chart_of_accounts?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${ACCOUNTANT_TOKEN}")"
+ACCOUNTANT_LEDGER="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/general_ledger?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${ACCOUNTANT_TOKEN}")"
+ACCOUNTANT_STOCK="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/stock?select=product_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${ACCOUNTANT_TOKEN}")"
+[[ "$(jq 'length' <<<"${ACCOUNTANT_CHART}")" -gt 0 && "$(jq 'length' <<<"${ACCOUNTANT_LEDGER}")" -gt 0 ]] || { echo "Accountant cannot read own-store financial records"; exit 1; }
+[[ "$(jq 'length' <<<"${ACCOUNTANT_STOCK}")" -eq 0 ]] || { echo "Accountant read stock without inventory.read"; exit 1; }
+
+echo "PASS: real Supabase Auth JWT role matrix, store isolation, role-management RPC, Push/Outbox RPCs, business RPC permissions, RBAC read boundaries and protected accounting writes"
