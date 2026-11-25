@@ -20,7 +20,11 @@ DECLARE
         'sales_returns','customer_payments','supplier_payments','stock_movements',
         'categories','brands','product_units','stock','purchase_items',
         'customer_ledgers','payment_allocations','invoice_items','supplier_ledger',
-        'return_items','expenses','revenues'
+        'return_items','expenses','revenues',
+        'purchase_returns','purchase_return_items','stock_adjustments','inventory_batches',
+        'stock_alerts','chart_of_accounts','journal_entries','general_ledger',
+        'purchase_receipts','purchase_receipt_items','purchase_closures',
+        'purchase_closure_items','purchase_amendments'
     ];
 BEGIN
     IF p_store_id IS NULL OR NULLIF(btrim(p_device_id),'') IS NULL
@@ -75,7 +79,11 @@ DECLARE
         'sales_returns','customer_payments','supplier_payments','stock_movements',
         'categories','brands','product_units','stock','purchase_items',
         'customer_ledgers','payment_allocations','invoice_items','supplier_ledger',
-        'return_items','expenses','revenues'
+        'return_items','expenses','revenues',
+        'purchase_returns','purchase_return_items','stock_adjustments','inventory_batches',
+        'stock_alerts','chart_of_accounts','journal_entries','general_ledger',
+        'purchase_receipts','purchase_receipt_items','purchase_closures',
+        'purchase_closure_items','purchase_amendments'
     ];
 BEGIN
     IF p_store_id IS NULL OR NULLIF(btrim(p_device_id),'') IS NULL
