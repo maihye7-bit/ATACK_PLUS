@@ -311,7 +311,8 @@ AS $purchase_accounting$
 DECLARE
  v_result JSONB; v_purchase UUID; v_user UUID; v_total NUMERIC(18,4);
  v_paid NUMERIC(18,4); v_due NUMERIC(18,4); v_method TEXT;
- v_received_value NUMERIC(18,4); v_lines JSONB:='[]'::JSONB; v_tender TEXT;
+ v_received_value NUMERIC(18,4); v_transit_value NUMERIC(18,4); v_variance NUMERIC(18,4);
+ v_lines JSONB:='[]'::JSONB; v_tender TEXT;
 BEGIN
  v_result:=public.process_purchase_pre_accounting(p_store_id,p_operation_id,p_payload);
  IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
@@ -323,15 +324,21 @@ BEGIN
  SELECT COALESCE(SUM(total_value),0) INTO v_received_value
    FROM public.stock_movements
   WHERE reference_id=v_purchase AND reference_type='purchase' AND type='IN';
+ SELECT COALESCE(SUM((pi.quantity-pi.received_quantity-pi.closed_quantity)*pi.unit_price),0)
+   INTO v_transit_value FROM public.purchase_items pi WHERE pi.purchase_id=v_purchase;
  v_tender:=CASE v_method WHEN 'CASH' THEN '1000' WHEN 'CARD' THEN '1110'
    WHEN 'BANK_TRANSFER' THEN '1100' ELSE '1120' END;
  IF v_received_value>0 THEN
-   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_received_value,'description','Received purchase inventory'));
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_received_value,'description','Received purchase inventory at weighted cost'));
  END IF;
- IF v_total>v_received_value THEN
-   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1210','entry_type','DEBIT','amount',v_total-v_received_value,'description','Unreceived purchase goods'));
- ELSIF v_received_value>v_total THEN
-   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','4200','entry_type','CREDIT','amount',v_received_value-v_total,'description','Purchase cost variance'));
+ IF v_transit_value>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1210','entry_type','DEBIT','amount',v_transit_value,'description','Unreceived purchase goods'));
+ END IF;
+ v_variance:=v_received_value+v_transit_value-v_total;
+ IF v_variance>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','4200','entry_type','CREDIT','amount',v_variance,'description','Purchase cost variance credit'));
+ ELSIF v_variance<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5200','entry_type','DEBIT','amount',-v_variance,'description','Purchase cost variance expense'));
  END IF;
  IF v_due>0 THEN
    v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2000','entry_type','CREDIT','amount',v_due,'description','Supplier payable'));
@@ -515,7 +522,7 @@ DECLARE
  v_old_credit NUMERIC(18,4); v_new_credit NUMERIC(18,4);
  v_old_total NUMERIC(18,4); v_new_total NUMERIC(18,4); v_delta NUMERIC(18,4);
  v_debt_delta NUMERIC(18,4); v_credit_delta NUMERIC(18,4);
- v_receipt_value NUMERIC(18,4); v_transit_amount NUMERIC(18,4);
+ v_receipt_value NUMERIC(18,4); v_original_value NUMERIC(18,4); v_transit_amount NUMERIC(18,4);
  v_transit_balance NUMERIC(18,4); v_variance NUMERIC(18,4);
  v_user UUID; v_lines JSONB:='[]'::JSONB;
 BEGIN
@@ -533,8 +540,12 @@ BEGIN
    FROM public.purchases p JOIN public.suppliers s ON s.id=p.supplier_id
   WHERE p.id=v_purchase AND p.store_id=p_store_id;
  SELECT received_by INTO v_user FROM public.purchase_receipts WHERE id=v_receipt AND purchase_id=v_purchase;
- SELECT COALESCE(SUM((accepted_quantity+excess_quantity)*unit_cost),0)
-   INTO v_receipt_value FROM public.purchase_receipt_items WHERE receipt_id=v_receipt;
+ SELECT COALESCE(SUM((accepted_quantity+excess_quantity)*unit_cost),0),
+        COALESCE(SUM(accepted_quantity*pi.unit_price),0)
+   INTO v_receipt_value,v_original_value
+   FROM public.purchase_receipt_items pri
+   JOIN public.purchase_items pi ON pi.id=pri.purchase_item_id
+  WHERE pri.receipt_id=v_receipt;
  v_delta:=v_new_total-v_old_total;
  v_debt_delta:=v_new_debt-v_old_debt;
  v_credit_delta:=v_new_credit-v_old_credit;
@@ -542,8 +553,8 @@ BEGIN
    RAISE EXCEPTION 'Receipt supplier balance delta does not reconcile to purchase value';
  END IF;
 
- v_transit_amount:=GREATEST(v_receipt_value-v_delta,0);
- v_variance:=GREATEST(v_delta-v_receipt_value,0);
+ v_transit_amount:=v_original_value;
+ v_variance:=v_receipt_value-(v_original_value+v_delta);
  SELECT COALESCE(SUM(CASE WHEN gl.entry_type='DEBIT' THEN gl.amount ELSE -gl.amount END),0)
    INTO v_transit_balance
    FROM public.general_ledger gl
@@ -579,7 +590,9 @@ BEGIN
    v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2200','entry_type','DEBIT','amount',v_credit_delta,'description','Supplier advance created by receipt adjustment'));
  END IF;
  IF v_variance>0 THEN
-   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5200','entry_type','DEBIT','amount',v_variance,'description','Receipt purchase cost variance'));
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','4200','entry_type','CREDIT','amount',v_variance,'description','Receipt cost variance credit'));
+ ELSIF v_variance<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5200','entry_type','DEBIT','amount',-v_variance,'description','Receipt cost variance expense'));
  END IF;
  IF jsonb_array_length(v_lines)>=2 THEN
    PERFORM public._post_journal_entry(p_store_id,'TRANSFER',v_receipt,
@@ -601,8 +614,8 @@ AS $purchase_amendment_accounting$
 DECLARE
  v_result JSONB; v_id UUID:=(p_payload->>'id')::UUID;
  v_purchase UUID; v_user UUID; v_old JSONB; v_new JSONB; v_old_row JSONB; v_row JSONB;
- v_item UUID; v_old_qty NUMERIC(18,4); v_old_price NUMERIC(18,4);
- v_new_qty NUMERIC(18,4); v_new_price NUMERIC(18,4);
+ v_item UUID; v_old_qty NUMERIC(18,4); v_old_price NUMERIC(18,4); v_old_cost NUMERIC(18,4);
+ v_new_qty NUMERIC(18,4); v_new_price NUMERIC(18,4); v_new_cost NUMERIC(18,4);
  v_received NUMERIC(18,4); v_closed NUMERIC(18,4);
  v_received_delta NUMERIC(18,4):=0; v_transit_delta NUMERIC(18,4):=0;
  v_delta NUMERIC(18,4); v_debt_reduction NUMERIC(18,4); v_supplier_credit NUMERIC(18,4);
@@ -621,19 +634,19 @@ BEGIN
     WHERE value->>'purchase_item_id'=v_item::TEXT;
    v_old_qty:=(v_old_row->>'quantity')::NUMERIC;
    v_old_price:=(v_old_row->>'unit_price')::NUMERIC;
+   v_old_cost:=(v_old_row->>'cost_per_unit')::NUMERIC;
    v_new_qty:=(v_row->>'quantity')::NUMERIC;
    v_new_price:=(v_row->>'unit_price')::NUMERIC;
+   v_new_cost:=(v_row->>'cost_per_unit')::NUMERIC;
    v_received:=(v_row->>'received_quantity')::NUMERIC;
    v_closed:=(v_row->>'closed_quantity')::NUMERIC;
-   v_received_delta:=v_received_delta+(v_received*(v_new_price-v_old_price));
+   v_received_delta:=v_received_delta+(v_received*(v_new_cost-v_old_cost));
    v_transit_delta:=v_transit_delta+
-     ((v_new_qty-v_received-v_closed)*v_new_price)-
-     ((v_old_qty-v_received-v_closed)*v_old_price);
+     ((v_new_qty-v_received-v_closed)*v_new_cost)-
+     ((v_old_qty-v_received-v_closed)*v_old_cost);
  END LOOP;
- IF round(v_received_delta+v_transit_delta,4)<>round(v_delta,4) THEN
-   RAISE EXCEPTION 'Purchase amendment received/transit allocation does not reconcile: %, %, total %',
-     v_received_delta,v_transit_delta,v_delta;
- END IF;
+ v_variance:=v_received_delta+v_transit_delta-v_delta;
+
  IF v_received_delta>0 THEN
    v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_received_delta,'description','Amended received inventory value'));
  ELSIF v_received_delta<0 THEN
@@ -653,6 +666,11 @@ BEGIN
    IF v_supplier_credit>0 THEN
      v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2200','entry_type','DEBIT','amount',v_supplier_credit,'description','Supplier advance created by purchase amendment'));
    END IF;
+ END IF;
+ IF v_variance>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','4200','entry_type','CREDIT','amount',v_variance,'description','Amendment cost variance credit'));
+ ELSIF v_variance<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5200','entry_type','DEBIT','amount',-v_variance,'description','Amendment cost variance expense'));
  END IF;
  IF jsonb_array_length(v_lines)>=2 THEN
    PERFORM public._post_journal_entry(p_store_id,'ADJUSTMENT',v_id,
