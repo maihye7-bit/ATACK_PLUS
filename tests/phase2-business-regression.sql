@@ -160,6 +160,24 @@ BEGIN
       RAISE EXCEPTION 'Rejected goods were not preserved in the receipt record';
     END IF;
 
+    -- D-053: a return is allowed while the purchase is still partially received;
+    -- it consumes only received stock and never changes the outstanding ordered quantity.
+    PERFORM public.process_purchase_return(
+      v_store,'60000000-0000-4000-8000-000000000022',
+      jsonb_build_object('id','92000000-0000-4000-8000-000000000003',
+        'purchase_id',v_purchase,'return_number','PH2-PRET-BEFORE-COMPLETE',
+        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,
+          'product_id',v_product,'quantity',1,'unit_id','pcs')))
+    );
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    IF v_qty IS DISTINCT FROM 16 OR
+       (SELECT received_quantity FROM public.purchase_items WHERE id=v_item) IS DISTINCT FROM 7 THEN
+      RAISE EXCEPTION 'Partial purchase return incorrectly affected unreceived quantity or stock: %',v_qty;
+    END IF;
+    IF (SELECT count(*) FROM public.purchase_receipts WHERE purchase_id=v_purchase)<>2 THEN
+      RAISE EXCEPTION 'Each receipt must have its own durable receipt header';
+    END IF;
+
     -- Over-receipt must roll back without changing the received quantity or stock.
     BEGIN
       PERFORM public.process_purchase_receipt(
@@ -180,7 +198,7 @@ BEGIN
     SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
     SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
     SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
-    IF v_qty IS DISTINCT FROM 20 OR v_received IS DISTINCT FROM 10 OR v_status IS DISTINCT FROM 'COMPLETE' THEN
+    IF v_qty IS DISTINCT FROM 19 OR v_received IS DISTINCT FROM 10 OR v_status IS DISTINCT FROM 'COMPLETE' THEN
       RAISE EXCEPTION 'Final receipt mismatch: stock %, received %, status %',v_qty,v_received,v_status;
     END IF;
     RAISE NOTICE 'PASS: partial receiving, idempotent receipt replay, over-receipt rejection, final completion';
@@ -285,8 +303,8 @@ BEGIN
       WHERE product_id=v_purchase_product AND location_id='main';
     SELECT current_debt,credit_balance INTO v_debt,v_credit
       FROM public.suppliers WHERE id=v_supplier;
-    IF v_total IS DISTINCT FROM 60 OR v_stock IS DISTINCT FROM 18
-       OR v_debt IS DISTINCT FROM 540 OR v_credit IS DISTINCT FROM 0 THEN
+    IF v_total IS DISTINCT FROM 60 OR v_stock IS DISTINCT FROM 17
+       OR v_debt IS DISTINCT FROM 510 OR v_credit IS DISTINCT FROM 0 THEN
       RAISE EXCEPTION 'Purchase return mismatch: total %, stock %, supplier debt %, credit %',
         v_total,v_stock,v_debt,v_credit;
     END IF;
