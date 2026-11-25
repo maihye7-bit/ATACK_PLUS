@@ -58,13 +58,12 @@ BEGIN
    IF v_receipt_item IS NOT NULL THEN
      SELECT pri.purchase_item_id,pri.actual_product_id,
        pri.accepted_quantity+pri.excess_quantity,pri.quantity_unit_id,pri.unit_cost,pri.unit_price,
-       pri.batch_number
-      INTO v_item,v_product,v_received,v_unit,v_cost,v_price,v_batch
+       pri.batch_number,pri.expiry_date
+      INTO v_item,v_product,v_received,v_unit,v_cost,v_price,v_batch,v_expiry
       FROM public.purchase_receipt_items pri JOIN public.purchase_receipts pr ON pr.id=pri.receipt_id
      WHERE pri.id=v_receipt_item AND pr.purchase_id=v_purchase_id AND pr.store_id=p_store_id
      FOR UPDATE OF pri;
      IF NOT FOUND THEN RAISE EXCEPTION 'Receipt line not found in original purchase'; END IF;
-     SELECT expiry_date INTO v_expiry FROM public.purchase_items WHERE id=v_item;
      SELECT COALESCE(SUM(quantity),0) INTO v_returned FROM public.purchase_return_items
        WHERE purchase_receipt_item_id=v_receipt_item;
    ELSE
