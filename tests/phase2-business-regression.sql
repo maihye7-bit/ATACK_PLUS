@@ -145,7 +145,9 @@ BEGIN
     v_result:=public.process_purchase_receipt(
       v_store,'60000000-0000-4000-8000-000000000005',
       jsonb_build_object('id','72000000-0000-4000-8000-000000000003','purchase_id',v_purchase,
-        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3)))
+        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'accepted_quantity',3,
+          'rejected_quantity',2,'rejection_reason','Damaged packaging',
+          'packaging_condition','TORN','photo_paths',jsonb_build_array('evidence/photo-1.jpg'))))
     );
     IF (v_result->>'replayed')::boolean IS DISTINCT FROM TRUE THEN RAISE EXCEPTION 'Receipt retry was not idempotent'; END IF;
 
