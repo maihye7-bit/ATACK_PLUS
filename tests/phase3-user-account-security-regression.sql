@@ -111,7 +111,7 @@ BEGIN
     );
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
     GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
-    IF v_error NOT LIKE '%Could not grant initial user role%' THEN RAISE; END IF;
+    IF v_error NOT LIKE '%Cannot manage a role containing permissions the caller does not hold%' THEN RAISE; END IF;
     denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Admin created a user with owner-level permissions'; END IF;
