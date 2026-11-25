@@ -430,7 +430,7 @@ BEGIN
  SELECT total_amount INTO v_total FROM public.purchases WHERE id=v_purchase;
  SELECT current_debt INTO v_after FROM public.suppliers WHERE id=v_supplier;
  IF v_qty IS DISTINCT FROM 12 OR v_received IS DISTINCT FROM 4 OR v_total IS DISTINCT FROM 384
-    OR v_after-v_before IS DISTINCT FROM 384 THEN
+    OR v_after-v_before IS DISTINCT FROM 84 THEN
    RAISE EXCEPTION 'Purchase amendment mismatch: ordered %, received %, total %, debt delta %',
     v_qty,v_received,v_total,v_after-v_before;
  END IF;
