@@ -2,6 +2,14 @@
 -- Applied after all Phase 2/3 RPC repair files.
 BEGIN;
 
+-- Preserve how customer/supplier credits split between debt settlement and carry-forward.
+ALTER TABLE public.sales_returns
+  ADD COLUMN IF NOT EXISTS applied_to_debt NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(applied_to_debt>=0),
+  ADD COLUMN IF NOT EXISTS customer_credit_created NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(customer_credit_created>=0);
+ALTER TABLE public.purchase_returns
+  ADD COLUMN IF NOT EXISTS applied_to_debt NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(applied_to_debt>=0),
+  ADD COLUMN IF NOT EXISTS supplier_credit_created NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(supplier_credit_created>=0);
+
 -- Complete the per-store chart of accounts. TVA is intentionally absent (D-029).
 CREATE OR REPLACE FUNCTION public.seed_default_chart_of_accounts(p_store_id UUID)
 RETURNS VOID
@@ -390,6 +398,98 @@ BEGIN
  RETURN v_result;
 END;
 $supplier_payment_accounting$;
+
+-- Sales returns reverse revenue/receivable and restore inventory only for good goods.
+ALTER FUNCTION public.process_sale_return(UUID,UUID,JSONB) RENAME TO process_sale_return_pre_accounting;
+REVOKE ALL ON FUNCTION public.process_sale_return_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+CREATE OR REPLACE FUNCTION public.process_sale_return(
+ p_store_id UUID,p_operation_id UUID,p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,extensions,public,pg_temp
+AS $sale_return_accounting$
+DECLARE
+ v_result JSONB; v_id UUID:=(p_payload->>'id')::UUID; v_user UUID;
+ v_total NUMERIC(18,4); v_applied NUMERIC(18,4); v_credit NUMERIC(18,4);
+ v_inventory NUMERIC(18,4); v_lines JSONB:='[]'::JSONB;
+BEGIN
+ v_result:=public.process_sale_return_pre_accounting(p_store_id,p_operation_id,p_payload);
+ IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
+ SELECT created_by,total_amount,applied_to_debt,customer_credit_created
+   INTO v_user,v_total,v_applied,v_credit
+   FROM public.sales_returns WHERE id=v_id AND store_id=p_store_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Sales return missing after successful RPC'; END IF;
+ IF v_total>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','4010','entry_type','DEBIT','amount',v_total,'description','Sales return'));
+ END IF;
+ IF v_applied>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1300','entry_type','CREDIT','amount',v_applied,'description','Customer receivable reduced'));
+ END IF;
+ IF v_credit>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2100','entry_type','CREDIT','amount',v_credit,'description','Customer credit balance created'));
+ END IF;
+ SELECT COALESCE(SUM(total_value),0) INTO v_inventory
+   FROM public.stock_movements WHERE reference_id=v_id AND reference_type='return' AND type='RETURN_IN';
+ IF v_inventory>0 THEN
+   v_lines:=v_lines||jsonb_build_array(
+     jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_inventory,'description','Returned saleable inventory'),
+     jsonb_build_object('account_code','5000','entry_type','CREDIT','amount',v_inventory,'description','Reverse cost of goods sold')
+   );
+ END IF;
+ IF jsonb_array_length(v_lines)>=2 THEN
+   PERFORM public._post_journal_entry(p_store_id,'RETURN',v_id,'Sales return '||v_id::TEXT,v_user,v_lines);
+ END IF;
+ RETURN v_result;
+END;
+$sale_return_accounting$;
+
+-- Purchase returns reduce supplier payables or create supplier advances; no cash payout.
+ALTER FUNCTION public.process_purchase_return(UUID,UUID,JSONB) RENAME TO process_purchase_return_pre_accounting;
+REVOKE ALL ON FUNCTION public.process_purchase_return_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+CREATE OR REPLACE FUNCTION public.process_purchase_return(
+ p_store_id UUID,p_operation_id UUID,p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,extensions,public,pg_temp
+AS $purchase_return_accounting$
+DECLARE
+ v_result JSONB; v_id UUID:=(p_payload->>'id')::UUID; v_user UUID;
+ v_total NUMERIC(18,4); v_applied NUMERIC(18,4); v_credit NUMERIC(18,4);
+ v_inventory NUMERIC(18,4); v_lines JSONB:='[]'::JSONB;
+BEGIN
+ v_result:=public.process_purchase_return_pre_accounting(p_store_id,p_operation_id,p_payload);
+ IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
+ SELECT created_by,total_amount,applied_to_debt,supplier_credit_created
+   INTO v_user,v_total,v_applied,v_credit
+   FROM public.purchase_returns WHERE id=v_id AND store_id=p_store_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Purchase return missing after successful RPC'; END IF;
+ IF v_applied>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2000','entry_type','DEBIT','amount',v_applied,'description','Supplier payable reduced'));
+ END IF;
+ IF v_credit>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2200','entry_type','DEBIT','amount',v_credit,'description','Supplier advance credit created'));
+ END IF;
+ SELECT COALESCE(SUM(total_value),0) INTO v_inventory
+   FROM public.stock_movements WHERE reference_id=v_id AND reference_type='return' AND type='RETURN_OUT';
+ IF v_inventory>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','CREDIT','amount',v_inventory,'description','Inventory returned to supplier'));
+ END IF;
+ IF v_total>v_inventory THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','4200','entry_type','CREDIT','amount',v_total-v_inventory,'description','Purchase return cost difference'));
+ ELSIF v_inventory>v_total THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5200','entry_type','DEBIT','amount',v_inventory-v_total,'description','Purchase return cost difference'));
+ END IF;
+ IF jsonb_array_length(v_lines)>=2 THEN
+   PERFORM public._post_journal_entry(p_store_id,'RETURN',v_id,'Purchase return '||v_id::TEXT,v_user,v_lines);
+ END IF;
+ RETURN v_result;
+END;
+$purchase_return_accounting$;
+
+REVOKE ALL ON FUNCTION public.process_sale_return_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.process_purchase_return_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.process_sale_return(UUID,UUID,JSONB) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.process_purchase_return(UUID,UUID,JSONB) TO authenticated;
 
 -- Trial balance and financial reports are store-scoped and execute with caller RLS.
 CREATE OR REPLACE VIEW public.v_trial_balance WITH (security_invoker=true) AS
