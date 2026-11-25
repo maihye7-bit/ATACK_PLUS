@@ -162,6 +162,18 @@ BEGIN
        WHERE je.store_id=pc.store_id AND je.source_type='ADJUSTMENT' AND je.source_id=pc.id))
  ) THEN RAISE EXCEPTION 'Purchase closure financial cancellation journal is missing'; END IF;
 
+ IF NOT EXISTS(
+   SELECT 1 FROM public.purchase_amendments pa
+   WHERE pa.id='75000000-0000-4000-8000-000000000007'
+     AND pa.inventory_cost_delta=6 AND pa.cogs_cost_delta=2 AND pa.transit_cost_delta=76
+ ) OR NOT EXISTS(
+   SELECT 1 FROM public.journal_entries je
+   JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
+   JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+   WHERE je.source_type='ADJUSTMENT' AND je.source_id='75000000-0000-4000-8000-000000000007'
+     AND gl.entry_type='DEBIT' AND coa.account_code='5000' AND gl.amount=2
+ ) THEN RAISE EXCEPTION 'Amendment did not split consumed cost into COGS and remaining inventory'; END IF;
+
  -- Goods in transit must reconcile to the ordered quantity still outstanding after receipts, closures and amendments.
  IF EXISTS(
    SELECT 1 FROM public.purchases p
