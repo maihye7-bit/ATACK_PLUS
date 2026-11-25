@@ -140,11 +140,11 @@ BEGIN
         RAISE EXCEPTION 'Outbox payload contains protected or unsupported fields: %', v_invalid_columns;
     END IF;
 
-    v_hash := encode(digest(jsonb_build_object(
+    v_hash := encode(public.atack_digest(convert_to(jsonb_build_object(
         'store_id', p_store_id, 'table_name', p_table_name,
         'operation', p_operation, 'record_uuid', p_record_uuid,
         'record', p_record_json
-    )::TEXT, 'sha256'), 'hex');
+    )::TEXT,'UTF8'), 'sha256'), 'hex');
 
     INSERT INTO public.sync_outbox
         (store_id, device_id, table_name, operation, record_uuid,
@@ -266,11 +266,11 @@ BEGIN
         END IF;
     END IF;
 
-    v_hash := encode(digest(jsonb_build_object(
+    v_hash := encode(public.atack_digest(convert_to(jsonb_build_object(
         'store_id', v_row.store_id, 'table_name', v_row.table_name,
         'operation', v_row.operation, 'record_uuid', v_row.record_uuid,
         'record', v_row.record_json
-    )::TEXT, 'sha256'), 'hex');
+    )::TEXT,'UTF8'), 'sha256'), 'hex');
     IF v_hash IS DISTINCT FROM v_row.payload_hash THEN
         RAISE EXCEPTION 'Outbox payload hash validation failed';
     END IF;
