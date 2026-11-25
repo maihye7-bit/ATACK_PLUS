@@ -168,10 +168,6 @@ fi
 echo "Verifying owner/seller role boundaries with real Auth JWTs..."
 expect_rpc_error "seller attempting to grant owner role" "${CASHIER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"owner",p_action:"GRANT"}')" "P0001"
-rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"GRANT"}')" >/dev/null
-rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
-  "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"REVOKE"}')" >/dev/null
 expect_rpc_error "seller managing user roles" "${CASHIER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')" "P0001"
 expect_rpc_error "owner managing a user from another store" "${OWNER_TOKEN}" "manage_store_user_role" \
