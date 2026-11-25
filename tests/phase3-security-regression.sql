@@ -37,6 +37,16 @@ BEGIN
     IF NOT has_table_privilege('authenticated',format('public.%I',t),'SELECT') THEN
       RAISE EXCEPTION 'authenticated lacks required SELECT on %',t;
     END IF;
+    IF EXISTS (
+      SELECT 1
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid=c.relnamespace
+        CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl,acldefault('r',c.relowner))) a
+       WHERE n.nspname='public' AND c.relname=t AND a.grantee=0
+         AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE')
+    ) THEN
+      RAISE EXCEPTION 'PUBLIC retains direct-write ACL on %',t;
+    END IF;
     FOREACH p IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
       IF has_table_privilege('authenticated',format('public.%I',t),p) THEN
         RAISE EXCEPTION 'authenticated unexpectedly has % privilege on %',p,t;
