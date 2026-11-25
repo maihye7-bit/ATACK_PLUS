@@ -57,15 +57,19 @@ signup_identity() {
 echo "Creating real Supabase Auth identities for the store owner and sellers..."
 OWNER_RESPONSE="$(signup_identity owner)"
 SELLER_RESPONSE="$(signup_identity seller)"
+STORE_B_RESPONSE="$(signup_identity store-b)"
 AUTH_USER_ID="$(jq -er '.user.id' <<<"${OWNER_RESPONSE}")"
 OWNER_TOKEN="$(jq -er '.access_token' <<<"${OWNER_RESPONSE}")"
 SELLER_AUTH_ID="$(jq -er '.user.id' <<<"${SELLER_RESPONSE}")"
 SELLER_TOKEN="$(jq -er '.access_token' <<<"${SELLER_RESPONSE}")"
+STORE_B_AUTH_ID="$(jq -er '.user.id' <<<"${STORE_B_RESPONSE}")"
+STORE_B_TOKEN="$(jq -er '.access_token' <<<"${STORE_B_RESPONSE}")"
 
 echo "Seeding isolated stores, real Auth-backed role fixtures and inventory..."
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v auth_user_id="$AUTH_USER_ID" -v user_a="$USER_A" \
   -v seller_auth_id="$SELLER_AUTH_ID" -v seller_user="$SELLER_USER" \
+  -v store_b_auth_id="$STORE_B_AUTH_ID" \
   -v store_a="$STORE_A" -v store_b="$STORE_B" \
   -v product_a="$PRODUCT_A" -v product_b="$PRODUCT_B" \
   -v store_b_user="$STORE_B_USER" -v supplier_a="$SUPPLIER_A" \
@@ -78,7 +82,7 @@ INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
 VALUES
  (:'user_a'::uuid,:'auth_user_id'::uuid,:'store_a'::uuid,'auth-smoke-owner','Auth Smoke Store Owner',TRUE),
  (:'seller_user'::uuid,:'seller_auth_id'::uuid,:'store_a'::uuid,'auth-smoke-seller','Auth Smoke Seller',TRUE),
- (:'store_b_user'::uuid,'b4000000-0000-4000-8000-000000000003',:'store_b'::uuid,'auth-smoke-store-b','Other Store Seller',TRUE);
+ (:'store_b_user'::uuid,:'store_b_auth_id'::uuid,:'store_b'::uuid,'auth-smoke-store-b','Other Store Seller',TRUE);
 
 INSERT INTO public.user_roles(user_id,role_id)
 VALUES
@@ -160,6 +164,20 @@ rpc_call() {
   fi
   printf '%s' "${body}"
 }
+
+echo "Verifying real-JWT isolation for stores and users across two stores..."
+OWNER_STORES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/stores?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
+SELLER_STORES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/stores?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+STORE_B_STORES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/stores?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${STORE_B_TOKEN}")"
+OWNER_USERS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id,store_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
+SELLER_USERS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id,store_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+STORE_B_USERS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id,store_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${STORE_B_TOKEN}")"
+[[ "$(jq 'length' <<<"${OWNER_STORES}")" -eq 1 && "$(jq -r '.[0].id' <<<"${OWNER_STORES}")" == "${STORE_A}" ]] || { echo "Owner stores isolation failed: ${OWNER_STORES}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_STORES}")" -eq 1 && "$(jq -r '.[0].id' <<<"${SELLER_STORES}")" == "${STORE_A}" ]] || { echo "Seller stores isolation failed: ${SELLER_STORES}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${STORE_B_STORES}")" -eq 1 && "$(jq -r '.[0].id' <<<"${STORE_B_STORES}")" == "${STORE_B}" ]] || { echo "Store B stores isolation failed: ${STORE_B_STORES}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_USERS}")" -eq 2 && "$(jq -e --arg store "${STORE_A}" 'all(.[]; .store_id==$store)' <<<"${OWNER_USERS}")" == "true" ]] || { echo "Owner users isolation failed: ${OWNER_USERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_USERS}")" -eq 1 && "$(jq -r '.[0].id' <<<"${SELLER_USERS}")" == "${SELLER_USER}" ]] || { echo "Seller profile isolation failed: ${SELLER_USERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${STORE_B_USERS}")" -eq 1 && "$(jq -r '.[0].id' <<<"${STORE_B_USERS}")" == "${STORE_B_USER}" ]] || { echo "Store B profile isolation failed: ${STORE_B_USERS}" >&2; exit 1; }
 
 echo "Verifying JWT-backed store isolation through PostgREST..."
 PRODUCTS="$(curl --fail-with-body --silent --show-error \
