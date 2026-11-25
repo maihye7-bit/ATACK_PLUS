@@ -74,7 +74,6 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public._claim_business_operation(UUID,UUID,TEXT,UUID,JSONB,TEXT) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public._claim_business_operation(UUID,UUID,TEXT,UUID,JSONB,TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public._claim_business_operation(UUID,UUID,TEXT,UUID,JSONB,TEXT) FROM PUBLIC, anon, authenticated;
 
 COMMIT;
