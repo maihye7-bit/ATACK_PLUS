@@ -170,9 +170,10 @@ BEGIN
           'product_id',v_product,'quantity',1,'unit_id','pcs')))
     );
     SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
-    IF v_qty IS DISTINCT FROM 16 OR
+    SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
+    IF v_qty IS DISTINCT FROM 16 OR v_cost IS DISTINCT FROM 17.5000 OR
        (SELECT received_quantity FROM public.purchase_items WHERE id=v_item) IS DISTINCT FROM 7 THEN
-      RAISE EXCEPTION 'Partial purchase return incorrectly affected unreceived quantity or stock: %',v_qty;
+      RAISE EXCEPTION 'Partial purchase return incorrectly affected unreceived quantity, stock or weighted cost: stock %, cost %',v_qty,v_cost;
     END IF;
     IF (SELECT count(*) FROM public.purchase_receipts WHERE purchase_id=v_purchase)<>2 THEN
       RAISE EXCEPTION 'Each receipt must have its own durable receipt header';
@@ -198,8 +199,10 @@ BEGIN
     SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
     SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
     SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
-    IF v_qty IS DISTINCT FROM 19 OR v_received IS DISTINCT FROM 10 OR v_status IS DISTINCT FROM 'COMPLETE' THEN
-      RAISE EXCEPTION 'Final receipt mismatch: stock %, received %, status %',v_qty,v_received,v_status;
+    SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
+    IF v_qty IS DISTINCT FROM 19 OR v_received IS DISTINCT FROM 10 OR v_status IS DISTINCT FROM 'COMPLETE'
+       OR v_cost IS DISTINCT FROM 19.4737 THEN
+      RAISE EXCEPTION 'Final receipt mismatch: stock %, received %, status %, cost %',v_qty,v_received,v_status,v_cost;
     END IF;
     RAISE NOTICE 'PASS: partial receiving, idempotent receipt replay, over-receipt rejection, final completion';
 END
@@ -222,6 +225,7 @@ DECLARE
     v_total NUMERIC(18,4);
     v_debt NUMERIC(18,4);
     v_credit NUMERIC(18,4);
+    v_cost NUMERIC(18,4);
     v_payments_before INTEGER;
     v_payments_after INTEGER;
 BEGIN
@@ -303,10 +307,12 @@ BEGIN
       WHERE product_id=v_purchase_product AND location_id='main';
     SELECT current_debt,credit_balance INTO v_debt,v_credit
       FROM public.suppliers WHERE id=v_supplier;
+    SELECT cost_price INTO v_cost FROM public.products WHERE id=v_purchase_product;
     IF v_total IS DISTINCT FROM 60 OR v_stock IS DISTINCT FROM 17
-       OR v_debt IS DISTINCT FROM 510 OR v_credit IS DISTINCT FROM 0 THEN
-      RAISE EXCEPTION 'Purchase return mismatch: total %, stock %, supplier debt %, credit %',
-        v_total,v_stock,v_debt,v_credit;
+       OR v_debt IS DISTINCT FROM 510 OR v_credit IS DISTINCT FROM 0
+       OR v_cost IS DISTINCT FROM 18.2353 THEN
+      RAISE EXCEPTION 'Purchase return mismatch: total %, stock %, supplier debt %, credit %, weighted cost %',
+        v_total,v_stock,v_debt,v_credit,v_cost;
     END IF;
 
     BEGIN
