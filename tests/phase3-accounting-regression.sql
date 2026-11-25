@@ -86,6 +86,73 @@ BEGIN
    RAISE EXCEPTION 'Customer bank collection journal has incorrect accounts';
  END IF;
 
+ -- A return against a partially settled credit invoice must first clear the remaining
+ -- receivable, then create customer credit for the excess; all three balances must reconcile.
+ INSERT INTO public.customers(id,store_id,code,name,current_debt,credit_balance,is_active)
+ VALUES('90000000-0000-4000-8000-000000000009',v_store,'ACC-CUST-009',
+        'Mixed Return Settlement Customer',0,0,TRUE);
+ PERFORM public.process_sale_invoice(
+   v_store,'60000000-0000-4000-8000-000000000083',
+   jsonb_build_object('id','80000000-0000-4000-8000-000000000083',
+     'invoice_number','ACC-INV-083','customer_id','90000000-0000-4000-8000-000000000009',
+     'paid_amount',0,'items',jsonb_build_array(jsonb_build_object(
+       'product_id',v_product,'quantity',1,'unit_id','pcs','unit_price',100)))
+ );
+ PERFORM public.process_customer_payment(
+   v_store,'60000000-0000-4000-8000-000000000084',
+   jsonb_build_object('id','81000000-0000-4000-8000-000000000083',
+     'customer_id','90000000-0000-4000-8000-000000000009',
+     'amount',70,'payment_method','CASH')
+ );
+ v_result:=public.process_sale_return(
+   v_store,'60000000-0000-4000-8000-000000000085',
+   jsonb_build_object('id','91000000-0000-4000-8000-000000000003',
+     'invoice_id','80000000-0000-4000-8000-000000000083',
+     'return_number','ACC-SRET-MIXED','refund_method','CREDIT','return_condition','GOOD',
+     'items',(SELECT jsonb_agg(jsonb_build_object('invoice_item_id',ii.id,
+       'product_id',ii.product_id,'quantity',1,'unit_id','pcs','unit_price',999))
+       FROM public.invoice_items ii WHERE ii.invoice_id='80000000-0000-4000-8000-000000000083'))
+ );
+ IF NOT EXISTS(SELECT 1 FROM public.sales_returns
+    WHERE id='91000000-0000-4000-8000-000000000003'
+      AND total_amount=100 AND applied_to_debt=30 AND customer_credit_created=70) THEN
+   RAISE EXCEPTION 'Mixed credit return did not allocate 30 to receivable and 70 to customer credit';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.customers
+    WHERE id='90000000-0000-4000-8000-000000000009'
+      AND current_debt=0 AND credit_balance=70) THEN
+   RAISE EXCEPTION 'Mixed credit return left incorrect customer debt/credit balances';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.journal_entries je
+    JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
+    JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+    WHERE je.store_id=v_store AND je.source_type='RETURN'
+      AND je.source_id='91000000-0000-4000-8000-000000000003'
+      AND gl.entry_type='DEBIT' AND coa.account_code='4010' AND gl.amount=100)
+    OR NOT EXISTS(SELECT 1 FROM public.journal_entries je
+    JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
+    JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+    WHERE je.store_id=v_store AND je.source_type='RETURN'
+      AND je.source_id='91000000-0000-4000-8000-000000000003'
+      AND gl.entry_type='CREDIT' AND coa.account_code='1300' AND gl.amount=30)
+    OR NOT EXISTS(SELECT 1 FROM public.journal_entries je
+    JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
+    JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+    WHERE je.store_id=v_store AND je.source_type='RETURN'
+      AND je.source_id='91000000-0000-4000-8000-000000000003'
+      AND gl.entry_type='CREDIT' AND coa.account_code='2100' AND gl.amount=70) THEN
+   RAISE EXCEPTION 'Mixed credit return journal does not split receivable and customer credit correctly';
+ END IF;
+ SELECT id INTO v_journal FROM public.journal_entries
+  WHERE store_id=v_store AND source_type='RETURN'
+    AND source_id='91000000-0000-4000-8000-000000000003';
+ IF v_journal IS NULL OR NOT EXISTS(SELECT 1 FROM public.general_ledger
+    WHERE journal_entry_id=v_journal AND entry_type='DEBIT' AND amount=100)
+    OR NOT EXISTS(SELECT 1 FROM public.general_ledger
+    WHERE journal_entry_id=v_journal AND entry_type='CREDIT' AND amount=100) THEN
+   RAISE EXCEPTION 'Mixed credit return journal is not balanced';
+ END IF;
+
  -- Supplier payment is posted against payables and the bank, not the cash drawer.
  v_result:=public.process_supplier_payment(
    v_store,'60000000-0000-4000-8000-000000000082',
@@ -212,8 +279,8 @@ BEGIN
    SELECT 1 FROM public.journal_entries je
    LEFT JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
    GROUP BY je.id,je.total_debit,je.total_credit
-   HAVING COUNT(gl.id)<2 OR SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT')<>je.total_debit
-      OR SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT')<>je.total_credit
+   HAVING COUNT(gl.id)<2 OR COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)<>je.total_debit
+      OR COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)<>je.total_credit
       OR je.total_debit<>je.total_credit
  ) THEN RAISE EXCEPTION 'Journal header/ledger totals are inconsistent'; END IF;
 
