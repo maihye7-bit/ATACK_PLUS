@@ -122,7 +122,7 @@ BEGIN
          WHERE ii.id=v_item_id AND ii.invoice_id=v_invoice_id AND ii.product_id=v_product
          FOR UPDATE;
       END IF;
-      IF v_item_id IS NULL THEN RAISE EXCEPTION 'No matching original invoice line has enough unreturned quantity'; END IF;
+      IF v_item_id IS NULL THEN RAISE EXCEPTION 'Return quantity exceeds unreturned original sale quantity' USING ERRCODE='23514'; END IF;
       IF v_unit IS NOT NULL AND v_unit<>v_original_unit THEN RAISE EXCEPTION 'Return unit must match original invoice line unit'; END IF;
 
       SELECT COALESCE(SUM(ri.quantity),0) INTO v_returned_qty
@@ -251,7 +251,7 @@ BEGIN
          WHERE pi.id=v_item_id AND pi.purchase_id=v_purchase_id AND pi.product_id=v_product
          FOR UPDATE;
       END IF;
-      IF v_item_id IS NULL THEN RAISE EXCEPTION 'No matching received purchase line has enough unreturned quantity'; END IF;
+      IF v_item_id IS NULL THEN RAISE EXCEPTION 'Return quantity exceeds received and unreturned purchase quantity' USING ERRCODE='23514'; END IF;
       IF v_unit IS NOT NULL AND v_unit<>v_original_unit THEN RAISE EXCEPTION 'Return unit must match original purchase line unit'; END IF;
 
       SELECT COALESCE(SUM(pri.quantity),0) INTO v_returned
