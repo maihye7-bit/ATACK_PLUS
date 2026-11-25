@@ -124,24 +124,33 @@ $cashier_denial$;
 ROLLBACK;
 
 DO $append_only$
-DECLARE denied BOOLEAN:=FALSE;
+DECLARE denied BOOLEAN:=FALSE; v_error TEXT;
 BEGIN
   BEGIN
     UPDATE public.audit_logs SET new_values_json='{"tampered":true}'
      WHERE id='97000000-0000-4000-8000-000000000001';
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%audit_logs is append-only; UPDATE is forbidden%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Audit log UPDATE was not blocked by append-only trigger'; END IF;
   denied:=FALSE;
   BEGIN
     DELETE FROM public.audit_logs WHERE id='97000000-0000-4000-8000-000000000001';
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%audit_logs is append-only; DELETE is forbidden%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Audit log DELETE was not blocked by append-only trigger'; END IF;
   denied:=FALSE;
   BEGIN
     TRUNCATE TABLE public.audit_logs;
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%audit_logs is append-only; TRUNCATE is forbidden%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Audit log TRUNCATE was not blocked by append-only trigger'; END IF;
   RAISE NOTICE 'PASS: audit log is append-only even for privileged database roles';
