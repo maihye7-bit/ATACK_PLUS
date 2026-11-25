@@ -274,7 +274,7 @@ BEGIN
      SELECT cost_price INTO v_old_cost FROM public.products WHERE id=v_actual FOR UPDATE;
      SELECT id INTO v_stock FROM public.stock WHERE product_id=v_actual AND location_id=v_location;
      UPDATE public.stock SET quantity=quantity+v_base WHERE id=v_stock;
-     UPDATE public.products SET cost_price=CASE WHEN v_old_qty=0 THEN round(v_actual_cost/v_factor,4)
+     UPDATE public.products SET cost_price=CASE WHEN v_old_qty<=0 THEN round(v_actual_cost/v_factor,4)
        ELSE round(((v_old_qty*v_old_cost)+((v_qty+v_excess)*v_actual_cost))/(v_old_qty+v_base),4) END,
        updated_at=NOW() WHERE id=v_actual;
      INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
