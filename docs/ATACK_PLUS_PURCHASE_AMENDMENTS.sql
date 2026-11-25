@@ -39,10 +39,15 @@ DECLARE
  v_user UUID; v_replay BOOLEAN; v_id UUID:=(p_payload->>'id')::UUID;
  v_purchase UUID:=(p_payload->>'purchase_id')::UUID;
  v_reason TEXT:=NULLIF(btrim(p_payload->>'reason'),'');
- v_supplier UUID; v_row JSONB; v_item UUID;
+ v_supplier UUID; v_row JSONB; v_item UUID; v_product UUID; v_unit TEXT;
  v_old_qty NUMERIC(18,4); v_old_price NUMERIC(18,4); v_old_cost NUMERIC(18,4);
  v_received NUMERIC(18,4); v_closed NUMERIC(18,4);
  v_new_qty NUMERIC(18,4); v_new_price NUMERIC(18,4); v_new_cost NUMERIC(18,4);
+ v_primary TEXT; v_factor NUMERIC(18,6); v_product_cost NUMERIC(18,4); v_stock_qty NUMERIC(18,4);
+ v_received_base NUMERIC(18,4); v_cost_delta NUMERIC(18,4);
+ v_inventory_delta NUMERIC(18,4); v_cogs_delta NUMERIC(18,4); v_transit_delta NUMERIC(18,4);
+ v_inventory_cost_total NUMERIC(18,4):=0; v_cogs_cost_total NUMERIC(18,4):=0;
+ v_transit_cost_total NUMERIC(18,4):=0;
  v_delta NUMERIC(18,4):=0; v_debt_reduction NUMERIC(18,4):=0; v_credit_increase NUMERIC(18,4):=0;
  v_old JSONB:='[]'::jsonb; v_new JSONB:='[]'::jsonb;
 BEGIN
@@ -62,8 +67,8 @@ BEGIN
               ORDER BY e.value->>'purchase_item_id'
  LOOP
    v_item:=(v_row->>'purchase_item_id')::UUID;
-   SELECT quantity,unit_price,cost_per_unit,received_quantity,closed_quantity
-     INTO v_old_qty,v_old_price,v_old_cost,v_received,v_closed
+   SELECT product_id,quantity_unit_id,quantity,unit_price,cost_per_unit,received_quantity,closed_quantity
+     INTO v_product,v_unit,v_old_qty,v_old_price,v_old_cost,v_received,v_closed
      FROM public.purchase_items WHERE id=v_item AND purchase_id=v_purchase FOR UPDATE;
    IF NOT FOUND THEN RAISE EXCEPTION 'Purchase item not found in this purchase'; END IF;
    v_new_qty:=COALESCE(NULLIF(v_row->>'quantity','')::NUMERIC,v_old_qty);
@@ -82,6 +87,40 @@ BEGIN
    v_new:=v_new||jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,
      'quantity',v_new_qty,'unit_price',v_new_price,'cost_per_unit',v_new_cost,
      'received_quantity',v_received,'closed_quantity',v_closed));
+
+   -- Revalue only the on-hand portion of received units; the consumed portion adjusts COGS.
+   v_cost_delta:=v_received*(v_new_cost-v_old_cost);
+   v_transit_delta:=((v_new_qty-v_received-v_closed)*v_new_cost)-
+                    ((v_old_qty-v_received-v_closed)*v_old_cost);
+   v_inventory_delta:=0;
+   IF v_received>0 AND v_cost_delta<>0 THEN
+     SELECT p.primary_unit_id,p.cost_price,
+       CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END
+       INTO v_primary,v_product_cost,v_factor
+       FROM public.products p LEFT JOIN public.product_units pu
+         ON pu.product_id=p.id AND pu.unit_id=v_unit
+      WHERE p.id=v_product AND p.store_id=p_store_id
+      FOR UPDATE OF p;
+     IF NOT FOUND OR v_factor IS NULL OR v_factor<=0 THEN
+       RAISE EXCEPTION 'Cannot revalue amended received stock: invalid product unit';
+     END IF;
+     SELECT GREATEST(COALESCE(SUM(quantity),0),0) INTO v_stock_qty
+       FROM public.stock WHERE product_id=v_product;
+     v_received_base:=v_received*v_factor;
+     IF v_stock_qty>0 THEN
+       v_inventory_delta:=v_cost_delta*LEAST(v_received_base,v_stock_qty)/v_received_base;
+       IF v_product_cost+(v_inventory_delta/v_stock_qty)<0 THEN
+         RAISE EXCEPTION 'Amendment would make weighted average product cost negative';
+       END IF;
+       UPDATE public.products SET cost_price=round(cost_price+(v_inventory_delta/v_stock_qty),4),
+         updated_at=NOW() WHERE id=v_product;
+     END IF;
+   END IF;
+   v_cogs_delta:=v_cost_delta-v_inventory_delta;
+   v_inventory_cost_total:=v_inventory_cost_total+v_inventory_delta;
+   v_cogs_cost_total:=v_cogs_cost_total+v_cogs_delta;
+   v_transit_cost_total:=v_transit_cost_total+v_transit_delta;
+
    UPDATE public.purchase_items SET quantity=v_new_qty,unit_price=v_new_price,
      cost_per_unit=v_new_cost,line_total=v_new_qty*v_new_price,
      received=(v_received>=v_new_qty),
@@ -114,7 +153,10 @@ BEGIN
  VALUES(v_id,p_store_id,v_purchase,p_operation_id,v_reason,v_old,v_new,v_user);
  UPDATE public.purchase_amendments
     SET debt_reduction=CASE WHEN v_delta<0 THEN v_debt_reduction ELSE 0 END,
-        supplier_credit_created=v_credit_increase
+        supplier_credit_created=v_credit_increase,
+        inventory_cost_delta=v_inventory_cost_total,
+        cogs_cost_delta=v_cogs_cost_total,
+        transit_cost_delta=v_transit_cost_total
   WHERE id=v_id;
  INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,old_values_json,new_values_json)
  VALUES(p_store_id,v_user,'PURCHASE_AMENDMENT',v_id,'UPDATE',v_old,
