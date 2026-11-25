@@ -384,7 +384,7 @@ BEGIN
 
         -- Insert return item
         INSERT INTO purchase_return_items(
-            return_id, product_id, quantity, unit_id, unit_price, line_total,
+            return_id, product_id, quantity, quantity_unit_id, unit_price, line_total,
             batch_number, expiry_date
         ) VALUES(
             v_return_id, v_product_id, v_qty, v_unit, v_unit_price, v_line_total,
@@ -884,7 +884,7 @@ BEGIN
         p.minimum_stock
     FROM stock s
     JOIN products p ON p.id = s.product_id
-    WHERE s.store_id = p_store_id
+    WHERE p.store_id = p_store_id
       AND (s.quantity - s.reserved_quantity) <= p.minimum_stock
       AND p.is_active = TRUE
     ORDER BY p.name;
@@ -985,6 +985,79 @@ CREATE TRIGGER trg_purchase_returns_same_store
 -- ============================================================
 -- 13. Audit logging triggers for new tables
 -- ============================================================
+
+-- Resolve return-item ownership through the correct parent table.
+-- Phase 1's generic return_id branch is sales-specific; purchase returns use
+-- purchase_returns -> purchases and must not be resolved through sales_returns.
+CREATE OR REPLACE FUNCTION public.trg_log_change()
+RETURNS TRIGGER AS $
+DECLARE
+    v_row JSONB;
+    v_store_id UUID;
+    v_record_id UUID;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        v_row := to_jsonb(OLD);
+    ELSE
+        v_row := to_jsonb(NEW);
+    END IF;
+
+    IF TG_TABLE_NAME = 'stores' THEN
+        v_store_id := (v_row->>'id')::UUID;
+    ELSIF v_row ? 'store_id' THEN
+        v_store_id := (v_row->>'store_id')::UUID;
+    ELSIF v_row ? 'invoice_id' THEN
+        SELECT store_id INTO v_store_id FROM public.invoices
+        WHERE id = (v_row->>'invoice_id')::UUID;
+    ELSIF v_row ? 'purchase_id' THEN
+        SELECT store_id INTO v_store_id FROM public.purchases
+        WHERE id = (v_row->>'purchase_id')::UUID;
+    ELSIF v_row ? 'customer_id' THEN
+        SELECT store_id INTO v_store_id FROM public.customers
+        WHERE id = (v_row->>'customer_id')::UUID;
+    ELSIF v_row ? 'supplier_id' THEN
+        SELECT store_id INTO v_store_id FROM public.suppliers
+        WHERE id = (v_row->>'supplier_id')::UUID;
+    ELSIF v_row ? 'original_invoice_id' THEN
+        SELECT store_id INTO v_store_id FROM public.invoices
+        WHERE id = (v_row->>'original_invoice_id')::UUID;
+    ELSIF TG_TABLE_NAME = 'purchase_return_items' AND v_row ? 'return_id' THEN
+        SELECT p.store_id INTO v_store_id
+        FROM public.purchase_returns pr
+        JOIN public.purchases p ON p.id = pr.original_purchase_id
+        WHERE pr.id = (v_row->>'return_id')::UUID;
+    ELSIF TG_TABLE_NAME = 'return_items' AND v_row ? 'return_id' THEN
+        SELECT i.store_id INTO v_store_id
+        FROM public.sales_returns r
+        JOIN public.invoices i ON i.id = r.original_invoice_id
+        WHERE r.id = (v_row->>'return_id')::UUID;
+    ELSIF v_row ? 'product_id' THEN
+        SELECT store_id INTO v_store_id FROM public.products
+        WHERE id = (v_row->>'product_id')::UUID;
+    ELSE
+        RAISE EXCEPTION 'Cannot resolve store_id for change-log table %', TG_TABLE_NAME;
+    END IF;
+
+    IF v_store_id IS NULL THEN
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION 'Cannot resolve store for change-log row in %', TG_TABLE_NAME;
+    END IF;
+
+    v_record_id := (v_row->>'id')::UUID;
+    IF TG_OP = 'INSERT' THEN
+        PERFORM public.log_change(v_store_id, TG_TABLE_NAME, v_record_id, 'INSERT', NULL, to_jsonb(NEW));
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        PERFORM public.log_change(v_store_id, TG_TABLE_NAME, v_record_id, 'UPDATE', to_jsonb(OLD), to_jsonb(NEW));
+        RETURN NEW;
+    ELSE
+        PERFORM public.log_change(v_store_id, TG_TABLE_NAME, v_record_id, 'DELETE', to_jsonb(OLD), NULL);
+        RETURN OLD;
+    END IF;
+END;
+$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- Change log triggers for purchase_returns
 CREATE TRIGGER trg_purchase_returns_log_change
