@@ -55,6 +55,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE3_RETURNS_INVENTORY_ACCOUNTING.sql"
+      - name: Run Phase 2 business regression tests
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-business-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
