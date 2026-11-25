@@ -202,6 +202,12 @@ BEGIN
    RAISE EXCEPTION 'Trial balance is not balanced: debit %, credit %',v_debit,v_credit;
  END IF;
 
+ SELECT COALESCE(SUM(balance),0) INTO v_debit
+   FROM public.v_balance_sheet WHERE store_id=v_store;
+ IF v_debit<>0 THEN
+   RAISE EXCEPTION 'Balance sheet equation does not balance after current earnings: %',v_debit;
+ END IF;
+
  -- A malformed journal must be rejected by the deferred database invariant.
  BEGIN
    INSERT INTO public.journal_entries(id,store_id,entry_number,entry_date,source_type,source_id,
