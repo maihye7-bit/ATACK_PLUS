@@ -127,6 +127,12 @@ BEGIN
       WHEN 'suppliers' THEN ARRAY['code','name','email','phone','address','city','tax_number',
         'contact_person','payment_terms','is_active']
     END;
+    IF p_operation='UPDATE' THEN
+        v_allowed_columns := array_remove(v_allowed_columns,'is_active');
+        IF p_table_name='products' THEN
+            v_allowed_columns := array_remove(v_allowed_columns,'primary_unit_id');
+        END IF;
+    END IF;
     SELECT array_agg(k) INTO v_invalid_columns
       FROM jsonb_object_keys(p_record_json) AS k
      WHERE k NOT IN ('id','store_id') AND NOT (k = ANY(v_allowed_columns));
@@ -251,6 +257,13 @@ BEGIN
      WHERE k NOT IN ('id','store_id') AND NOT (k = ANY(v_allowed_columns));
     IF COALESCE(cardinality(v_invalid_columns),0) > 0 THEN
         RAISE EXCEPTION 'Outbox payload contains protected or unsupported fields: %', v_invalid_columns;
+    END IF;
+
+    IF v_row.operation='UPDATE' THEN
+        v_allowed_columns := array_remove(v_allowed_columns,'is_active');
+        IF v_row.table_name='products' THEN
+            v_allowed_columns := array_remove(v_allowed_columns,'primary_unit_id');
+        END IF;
     END IF;
 
     v_hash := encode(digest(jsonb_build_object(
