@@ -51,7 +51,7 @@ BEGIN
      WHERE store_id = p_store_id
      FOR UPDATE;
 
-    v_hash := encode(digest(convert_to(p_operation_name || ':' || p_payload::text, 'UTF8'), 'sha256'), 'hex');
+    v_hash := encode(public.atack_digest(convert_to(p_operation_name || ':' || p_payload::text, 'UTF8'), 'sha256'), 'hex');
     INSERT INTO public.processed_operations(
         store_id, operation_id, operation_type, entity_table, entity_uuid, payload_hash
     ) VALUES (
