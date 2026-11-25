@@ -41,12 +41,15 @@ BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000005',TRUE);
 SET LOCAL ROLE authenticated;
 DO $admin_role_limits$
-DECLARE denied BOOLEAN:=FALSE; result JSONB; n INTEGER;
+DECLARE denied BOOLEAN:=FALSE; result JSONB; n INTEGER; v_error TEXT;
 BEGIN
   BEGIN
     PERFORM public.manage_store_user_role(
       '99000000-0000-4000-8000-000000000006','owner','GRANT');
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Cannot manage a role containing permissions the caller does not hold%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Admin was able to grant owner role'; END IF;
 
@@ -70,7 +73,10 @@ BEGIN
   BEGIN
     PERFORM public.manage_store_user_role(
       '30000000-0000-4000-8000-000000000001','owner','REVOKE');
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Cannot manage a role containing permissions the caller does not hold%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Admin was able to revoke the owner role'; END IF;
 
@@ -78,7 +84,10 @@ BEGIN
   BEGIN
     PERFORM public.manage_store_user_role(
       '99000000-0000-4000-8000-000000000007','cashier','REVOKE');
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Cannot revoke the target user''s final role%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'RPC allowed removal of a target user''s final role'; END IF;
 
@@ -86,7 +95,10 @@ BEGIN
   BEGIN
     PERFORM public.manage_store_user_role(
       '99000000-0000-4000-8000-000000000007','cashier',NULL);
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Action must be GRANT or REVOKE%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'RPC treated NULL action as REVOKE'; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.user_roles
@@ -98,7 +110,10 @@ BEGIN
   BEGIN
     PERFORM public.manage_store_user_role(
       '30000000-0000-4000-8000-000000000004','cashier','GRANT');
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Target user is missing, inactive or belongs to another store%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Cross-store role grant was accepted'; END IF;
 
