@@ -593,7 +593,8 @@ BEGIN
    'reason','Approved negative stock test','quantity',6,'unit_id','pcs'));
  SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
  IF v_qty IS DISTINCT FROM -2 OR NOT EXISTS(SELECT 1 FROM public.audit_logs
-    WHERE entity_id='76000000-0000-4000-8000-000000000011' AND action='NEGATIVE_STOCK') THEN
+    WHERE entity_id='76000000-0000-4000-8000-000000000011' AND action='UPDATE'
+      AND new_values_json->>'event'='NEGATIVE_STOCK') THEN
   RAISE EXCEPTION 'Authorized negative stock or audit mismatch: %',v_qty;
  END IF;
  RAISE NOTICE 'PASS: inventory.adjust permission, negative-stock special permission, weighted adjustment cost and balanced journal entries';
