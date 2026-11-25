@@ -17,6 +17,7 @@ DECLARE
   v_cursor BIGINT;
   v_count INTEGER;
   v_denied BOOLEAN;
+  v_error TEXT;
 BEGIN
   IF public.current_user_store_id() IS DISTINCT FROM v_store THEN
     RAISE EXCEPTION 'Sync test authenticated user resolved to the wrong store';
@@ -35,7 +36,10 @@ BEGIN
   BEGIN
     PERFORM * FROM public.get_unsynced_records(v_store,
       '92000000-0000-4000-8000-000000000002','products',0);
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Device is not registered for this store%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Cross-store device was allowed to Pull'; END IF;
 
@@ -49,21 +53,30 @@ BEGIN
   v_denied:=FALSE;
   BEGIN
     PERFORM * FROM public.get_unsynced_records(v_store,v_device,'audit_logs',0);
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Table audit_logs is not enabled for incremental sync%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Untracked audit_logs Pull was allowed'; END IF;
 
   v_denied:=FALSE;
   BEGIN
     PERFORM public.acknowledge_sync_cursor(v_store,v_device,'audit_logs',0);
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Table audit_logs is not enabled for incremental sync%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Untracked table ACK was allowed'; END IF;
 
   v_denied:=FALSE;
   BEGIN
     PERFORM public.acknowledge_sync_cursor(v_store,v_device,'products',v_cursor+100000);
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Cannot acknowledge a cursor beyond the latest change%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'ACK beyond the latest table cursor was allowed'; END IF;
 
@@ -71,7 +84,10 @@ BEGIN
   BEGIN
     PERFORM public.acknowledge_sync_cursor(v_store,
       '92000000-0000-4000-8000-000000000002','products',v_cursor);
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Device is not registered for this store%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Cross-store device was allowed to ACK'; END IF;
 
