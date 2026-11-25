@@ -79,6 +79,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-business-regression.sql"
+      - name: Run concurrent purchase regression
+        env:
+          PGPASSWORD: postgres
+        run: bash tests/phase2-concurrency.sh
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
