@@ -32,6 +32,9 @@ BEGIN
   IF NOT public.acknowledge_sync_cursor(v_store,v_device,'products',v_cursor) THEN
     RAISE EXCEPTION 'Valid Pull cursor was not acknowledged';
   END IF;
+  IF NOT public.acknowledge_sync_cursor(v_store,v_device,'products',0) THEN
+    RAISE EXCEPTION 'Stale zero cursor ACK was not safely accepted';
+  END IF;
   v_denied:=FALSE;
   BEGIN
     PERFORM * FROM public.get_unsynced_records(v_store,
@@ -103,7 +106,10 @@ BEGIN
      WHERE store_id='10000000-0000-4000-8000-000000000001'
        AND device_id='91000000-0000-4000-8000-000000000001'
        AND table_name='products'
-       AND last_pull_seq>0
+       AND last_pull_seq=(SELECT COALESCE(MAX(sync_cursor),0) FROM public.change_log
+                           WHERE store_id='10000000-0000-4000-8000-000000000001'
+                             AND table_name='products')
+       AND cursor_value=last_pull_seq::TEXT
   ) THEN
     RAISE EXCEPTION 'Acknowledged cursor was not persisted';
   END IF;
