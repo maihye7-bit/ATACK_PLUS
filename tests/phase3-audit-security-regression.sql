@@ -3,7 +3,7 @@ INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
 VALUES ('30000000-0000-4000-8000-000000000003',
         '20000000-0000-4000-8000-000000000003',
         '10000000-0000-4000-8000-000000000001',
-        'phase3_audit_cashier','Phase 3 Audit Cashier',TRUE)
+        'phase3_audit_seller','Phase 3 Audit Seller',TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
@@ -67,18 +67,12 @@ BEGIN
     RAISE EXCEPTION 'Internal sync state is directly readable by authenticated';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.role_permissions rp
-      JOIN public.roles r ON r.id=rp.role_id
       JOIN public.permissions p ON p.id=rp.permission_id
-      WHERE r.id='owner' AND p.code='audit.read')
-     OR NOT EXISTS (SELECT 1 FROM public.role_permissions rp
-      JOIN public.roles r ON r.id=rp.role_id
-      JOIN public.permissions p ON p.id=rp.permission_id
-      WHERE r.id='admin' AND p.code='audit.read')
+      WHERE rp.role_id='owner' AND p.code='audit.read')
      OR EXISTS (SELECT 1 FROM public.role_permissions rp
-      JOIN public.roles r ON r.id=rp.role_id
       JOIN public.permissions p ON p.id=rp.permission_id
-      WHERE r.id NOT IN ('owner','admin') AND p.code='audit.read') THEN
-    RAISE EXCEPTION 'audit.read role assignment is not least-privilege';
+      WHERE rp.role_id<>'owner' AND p.code='audit.read') THEN
+    RAISE EXCEPTION 'audit.read must be reserved exclusively for the store owner';
   END IF;
   RAISE NOTICE 'PASS: audit and sync observability ACLs, RLS, and least-privilege role mapping';
 END
@@ -104,23 +98,23 @@ ROLLBACK;
 BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000003',TRUE);
 SET LOCAL ROLE authenticated;
-DO $cashier_denial$
+DO $seller_denial$
 DECLARE n INTEGER; denied BOOLEAN:=FALSE;
 BEGIN
   SELECT count(*) INTO n FROM public.audit_logs;
-  IF n<>0 THEN RAISE EXCEPTION 'Cashier can read audit logs without audit.read'; END IF;
+  IF n<>0 THEN RAISE EXCEPTION 'Seller can read audit logs without audit.read'; END IF;
   SELECT count(*) INTO n FROM public.sync_log;
-  IF n<>0 THEN RAISE EXCEPTION 'Cashier can read sync logs without sync.manage'; END IF;
+  IF n<>0 THEN RAISE EXCEPTION 'Seller can read sync logs without sync.manage'; END IF;
   BEGIN
     INSERT INTO public.audit_logs(store_id,user_id,action)
     VALUES('10000000-0000-4000-8000-000000000001',
            '30000000-0000-4000-8000-000000000003','CREATE');
   EXCEPTION WHEN insufficient_privilege THEN denied:=TRUE;
   END;
-  IF NOT denied THEN RAISE EXCEPTION 'Cashier direct audit insert was not denied'; END IF;
+  IF NOT denied THEN RAISE EXCEPTION 'Seller direct audit insert was not denied'; END IF;
   RAISE NOTICE 'PASS: non-privileged user cannot read audit/sync logs or write audit records';
 END
-$cashier_denial$;
+$seller_denial$;
 ROLLBACK;
 
 DO $append_only$
