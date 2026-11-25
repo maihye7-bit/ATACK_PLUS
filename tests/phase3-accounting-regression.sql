@@ -21,6 +21,15 @@ BEGIN
    RAISE EXCEPTION 'Default chart of accounts is incomplete';
  END IF;
 
+ IF has_table_privilege('anon','public.v_trial_balance','SELECT')
+    OR has_table_privilege('anon','public.v_balance_sheet','SELECT')
+    OR has_table_privilege('anon','public.v_income_statement','SELECT')
+    OR NOT has_table_privilege('authenticated','public.v_trial_balance','SELECT')
+    OR NOT has_table_privilege('authenticated','public.v_balance_sheet','SELECT')
+    OR NOT has_table_privilege('authenticated','public.v_income_statement','SELECT') THEN
+   RAISE EXCEPTION 'Financial reporting view grants are unsafe';
+ END IF;
+
  FOREACH v_proc IN ARRAY ARRAY[
    'public.process_sale_invoice(uuid,uuid,jsonb)',
    'public.process_purchase(uuid,uuid,jsonb)',
