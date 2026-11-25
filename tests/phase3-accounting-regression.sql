@@ -31,10 +31,15 @@ BEGIN
      'items',jsonb_build_array(jsonb_build_object('product_id',v_product,
        'quantity',1,'unit_id','pcs','unit_price',100)))
  );
- IF NOT EXISTS(SELECT 1 FROM public.journal_entries
-    WHERE store_id=v_store AND source_type='SALE'
-      AND source_id='80000000-0000-4000-8000-000000000080'
-      AND total_debit=total_credit AND total_credit=100) THEN
+ IF NOT EXISTS(
+   SELECT 1 FROM public.journal_entries je
+   JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
+   JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+   WHERE je.store_id=v_store AND je.source_type='SALE'
+     AND je.source_id='80000000-0000-4000-8000-000000000080'
+     AND je.total_debit=je.total_credit
+     AND gl.entry_type='CREDIT' AND coa.account_code='4000' AND gl.amount=100
+ ) THEN
    RAISE EXCEPTION 'Credit sale journal missing or incorrect';
  END IF;
  v_result:=public.process_customer_payment(
