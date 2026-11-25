@@ -449,7 +449,7 @@ DECLARE
  v_purchase UUID:='70000000-0000-4000-8000-000000000007';
  v_item UUID:='71000000-0000-4000-8000-000000000007';
  v_result JSONB; v_before NUMERIC(18,4); v_after NUMERIC(18,4);
- v_qty NUMERIC(18,4); v_received NUMERIC(18,4); v_total NUMERIC(18,4);
+ v_qty NUMERIC(18,4); v_received NUMERIC(18,4); v_total NUMERIC(18,4); v_product_cost NUMERIC(18,4);
 BEGIN
  PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
  INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
@@ -460,6 +460,14 @@ BEGIN
     'quantity',10,'received_quantity',4,'unit_id','pcs','unit_price',30,'cost_per_unit',30))));
  SELECT current_debt INTO v_before FROM public.suppliers WHERE id=v_supplier;
 
+ -- Consume one of the received units before the amendment: its cost delta must adjust COGS,
+ -- while the remaining three units adjust inventory and the product weighted-average cost.
+ PERFORM public.process_sale_invoice(v_store,'60000000-0000-4000-8000-000000000030',
+  jsonb_build_object('id','80000000-0000-4000-8000-000000000007',
+   'invoice_number','PH2-INV-AMEND-COST','paid_amount',50,'payment_method','CASH',
+   'items',jsonb_build_array(jsonb_build_object('product_id',v_product,
+    'quantity',1,'unit_id','pcs','unit_price',50))));
+
  v_result:=public.process_purchase_amendment(v_store,'60000000-0000-4000-8000-000000000020',
   jsonb_build_object('id','75000000-0000-4000-8000-000000000007',
    'purchase_id',v_purchase,'reason','Supplier price and quantity confirmed after partial delivery',
@@ -468,10 +476,11 @@ BEGIN
  SELECT quantity,received_quantity INTO v_qty,v_received FROM public.purchase_items WHERE id=v_item;
  SELECT total_amount INTO v_total FROM public.purchases WHERE id=v_purchase;
  SELECT current_debt INTO v_after FROM public.suppliers WHERE id=v_supplier;
+ SELECT cost_price INTO v_product_cost FROM public.products WHERE id=v_product;
  IF v_qty IS DISTINCT FROM 12 OR v_received IS DISTINCT FROM 4 OR v_total IS DISTINCT FROM 384
-    OR v_after-v_before IS DISTINCT FROM 84 THEN
-   RAISE EXCEPTION 'Purchase amendment mismatch: ordered %, received %, total %, debt delta %',
-    v_qty,v_received,v_total,v_after-v_before;
+    OR v_after-v_before IS DISTINCT FROM 84 OR v_product_cost IS DISTINCT FROM 32 THEN
+   RAISE EXCEPTION 'Purchase amendment mismatch: ordered %, received %, total %, debt delta %, weighted cost %',
+    v_qty,v_received,v_total,v_after-v_before,v_product_cost;
  END IF;
  IF NOT EXISTS(SELECT 1 FROM public.purchase_amendments
     WHERE id='75000000-0000-4000-8000-000000000007'
