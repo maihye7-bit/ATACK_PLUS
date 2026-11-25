@@ -98,6 +98,19 @@ BEGIN
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Derived customer balances entered generic Outbox'; END IF;
 
+  v_denied:=FALSE;
+  BEGIN
+    PERFORM public.create_outbox_entry(
+      v_store,v_device,'categories','UPDATE',
+      '93000000-0000-4000-8000-000000000010',
+      '95000000-0000-4000-8000-000000000006',
+      jsonb_build_object('id','93000000-0000-4000-8000-000000000010',
+        'store_id',v_store,'name','Hidden without tombstone','is_active',FALSE)
+    );
+  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  END;
+  IF NOT v_denied THEN RAISE EXCEPTION 'Generic UPDATE bypassed the tombstone soft-delete path'; END IF;
+
   v_result := public.apply_outbox_operation(v_outbox);
   IF COALESCE((v_result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
     RAISE EXCEPTION 'Valid metadata Push failed: %',v_result;
