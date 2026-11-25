@@ -585,13 +585,10 @@ BEGIN
   RAISE EXCEPTION 'Stock adjustment idempotency failed';
  END IF;
 
- -- Cashier receives adjustment permission but not negative-stock permission.
+ -- Seller has no stock-adjustment permission; stock control remains with the owner.
  INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
- VALUES(v_cashier,v_cashier_auth,v_store,'phase2_cashier','Phase 2 Cashier',TRUE);
+ VALUES(v_cashier,v_cashier_auth,v_store,'phase2_seller','Phase 2 Seller',TRUE);
  INSERT INTO public.user_roles(user_id,role_id) VALUES(v_cashier,'cashier');
- INSERT INTO public.role_permissions(role_id,permission_id)
- SELECT 'cashier',id FROM public.permissions WHERE code='inventory.adjust'
- ON CONFLICT(role_id,permission_id) DO NOTHING;
  PERFORM set_config('request.jwt.claim.sub',v_cashier_auth::text,TRUE);
  BEGIN
   PERFORM public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000026',
@@ -604,7 +601,7 @@ BEGIN
  SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
  IF v_qty IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'Denied negative adjustment changed stock: %',v_qty; END IF;
 
- -- Owner with inventory.allow_negative can proceed, and the exception is audited.
+ -- Only the owner has inventory.adjust and inventory.allow_negative; the exception is audited.
  PERFORM set_config('request.jwt.claim.sub',v_owner_auth::text,TRUE);
  v_result:=public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000027',
   jsonb_build_object('id','76000000-0000-4000-8000-000000000011',
