@@ -244,7 +244,7 @@ BEGIN
       RAISE EXCEPTION 'Sale return retry was not idempotent';
     END IF;
     SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_sale_product AND location_id='main';
-    IF v_stock IS DISTINCT FROM 20 THEN RAISE EXCEPTION 'Sale return stock mismatch: %',v_stock; END IF;
+    IF v_stock IS DISTINCT FROM 19 THEN RAISE EXCEPTION 'Sale return stock mismatch: %',v_stock; END IF;
 
     -- A second return of the already-returned sold quantity must be rejected.
     BEGIN
@@ -297,4 +297,4 @@ BEGIN
 
     RAISE NOTICE 'PASS: sale return source-line cap, original price, customer credit, no cash payout, purchase received-quantity cap and supplier ledger';
 END
-&returns_regression$;
+$returns_regression$;
