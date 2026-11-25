@@ -619,7 +619,7 @@ DECLARE
  v_received NUMERIC(18,4); v_closed NUMERIC(18,4);
  v_received_delta NUMERIC(18,4):=0; v_transit_delta NUMERIC(18,4):=0;
  v_delta NUMERIC(18,4); v_debt_reduction NUMERIC(18,4); v_supplier_credit NUMERIC(18,4);
- v_lines JSONB:='[]'::JSONB;
+ v_variance NUMERIC(18,4); v_lines JSONB:='[]'::JSONB;
 BEGIN
  v_result:=public.process_purchase_amendment_pre_accounting(p_store_id,p_operation_id,p_payload);
  IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
