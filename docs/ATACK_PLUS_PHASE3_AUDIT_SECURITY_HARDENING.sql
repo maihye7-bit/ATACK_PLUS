@@ -2,7 +2,7 @@
 -- least-privilege access to audit and synchronization observability tables.
 BEGIN;
 
--- Explicit audit visibility permission: owner/admin only.
+-- Audit visibility is reserved for the store owner/superadmin.
 INSERT INTO public.permissions(code,description)
 VALUES ('audit.read','Read the store audit trail')
 ON CONFLICT (code) DO NOTHING;
@@ -11,8 +11,13 @@ INSERT INTO public.role_permissions(role_id,permission_id)
 SELECT r.id,p.id
   FROM public.roles r
   CROSS JOIN public.permissions p
- WHERE r.id IN ('owner','admin') AND p.code='audit.read'
+ WHERE r.id='owner' AND p.code='audit.read'
 ON CONFLICT (role_id,permission_id) DO NOTHING;
+
+-- Remove legacy default grants to delegated roles; only the owner has audit.read.
+DELETE FROM public.role_permissions rp
+ USING public.permissions p
+ WHERE rp.permission_id=p.id AND p.code='audit.read' AND rp.role_id<>'owner';
 
 -- Audit trail: append-only, visible only to users with audit.read in their store.
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
