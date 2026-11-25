@@ -15,10 +15,9 @@ ALTER TABLE public.purchases ADD COLUMN IF NOT EXISTS receiving_status TEXT NOT 
 ALTER TABLE public.purchases DROP CONSTRAINT IF EXISTS purchases_receiving_status_check;
 ALTER TABLE public.purchases ADD CONSTRAINT purchases_receiving_status_check CHECK (receiving_status IN ('PENDING','PARTIAL','COMPLETE','CLOSED'));
 UPDATE public.purchases p SET receiving_status=CASE
- WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'PENDING'
- WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)=0 THEN 'PENDING'
- WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'COMPLETE'
- ELSE 'PARTIAL' END;
+ WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity>0) THEN 'PENDING'
+ WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity<pi.quantity) THEN 'PARTIAL'
+ ELSE 'COMPLETE' END;
 
 -- Correct allocation validation: invoice.remaining_amount is the authoritative
 -- outstanding amount and is decremented in the same locked transaction. Summing
@@ -391,10 +390,10 @@ BEGIN
     END LOOP;
 
     UPDATE public.purchases p SET receiving_status=CASE
-      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)=0 THEN 'PENDING'
-      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'COMPLETE'
-      ELSE 'PARTIAL' END,
-      received_date=CASE WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN NOW() ELSE NULL END
+      WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity>0) THEN 'PENDING'
+      WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity<pi.quantity) THEN 'PARTIAL'
+      ELSE 'COMPLETE' END,
+      received_date=CASE WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity<pi.quantity) THEN NOW() ELSE NULL END
      WHERE p.id=v_id;
 
     SELECT current_debt INTO v_debt FROM public.suppliers WHERE id=v_supplier FOR UPDATE;
@@ -481,10 +480,10 @@ BEGIN
       v_received_total:=v_received_total+v_base;
     END LOOP;
     UPDATE public.purchases p SET receiving_status=CASE
-      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)=0 THEN 'PENDING'
-      WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN 'COMPLETE'
-      ELSE 'PARTIAL' END,
-      received_date=CASE WHEN (SELECT COALESCE(SUM(pi.received_quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id)>=(SELECT COALESCE(SUM(pi.quantity),0) FROM public.purchase_items pi WHERE pi.purchase_id=p.id) THEN NOW() ELSE NULL END,
+      WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity>0) THEN 'PENDING'
+      WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity<pi.quantity) THEN 'PARTIAL'
+      ELSE 'COMPLETE' END,
+      received_date=CASE WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity<pi.quantity) THEN NOW() ELSE NULL END,
       updated_at=NOW() WHERE p.id=v_purchase_id;
     RETURN jsonb_build_object('success',TRUE,'replayed',FALSE,'receipt_id',v_receipt_id,
       'purchase_id',v_purchase_id,'received_base_quantity',v_received_total);
