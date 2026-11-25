@@ -737,17 +737,33 @@ GROUP BY coa.store_id,coa.id,coa.account_code,coa.account_name,coa.account_type
 ORDER BY coa.store_id,coa.account_code;
 
 CREATE OR REPLACE VIEW public.v_balance_sheet WITH (security_invoker=true) AS
-SELECT coa.account_code,coa.account_name,coa.account_type,
- COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
- COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0) AS balance,
- coa.store_id
-FROM public.chart_of_accounts coa
-LEFT JOIN public.general_ledger gl ON gl.account_id=coa.id AND gl.store_id=coa.store_id
-WHERE coa.is_active AND coa.account_type IN ('ASSET','LIABILITY','EQUITY','CURRENT_ASSET','CURRENT_LIABILITY')
-GROUP BY coa.store_id,coa.id,coa.account_code,coa.account_name,coa.account_type
-HAVING COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
-       COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)<>0
-ORDER BY coa.store_id,coa.account_code;
+WITH account_balances AS (
+ SELECT coa.account_code,coa.account_name,coa.account_type,
+  COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
+  COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0) AS balance,
+  coa.store_id
+ FROM public.chart_of_accounts coa
+ LEFT JOIN public.general_ledger gl ON gl.account_id=coa.id AND gl.store_id=coa.store_id
+ WHERE coa.is_active AND coa.account_type IN ('ASSET','LIABILITY','EQUITY','CURRENT_ASSET','CURRENT_LIABILITY')
+ GROUP BY coa.store_id,coa.id,coa.account_code,coa.account_name,coa.account_type
+ HAVING COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
+        COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)<>0
+), current_earnings AS (
+ SELECT coa.store_id,
+  -(
+    COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
+    COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)
+   ) AS balance
+ FROM public.chart_of_accounts coa
+ LEFT JOIN public.general_ledger gl ON gl.account_id=coa.id AND gl.store_id=coa.store_id
+ WHERE coa.is_active AND coa.account_type IN ('REVENUE','EXPENSE','COST_OF_GOODS_SOLD','INCOME')
+ GROUP BY coa.store_id
+)
+SELECT account_code,account_name,account_type,balance,store_id FROM account_balances
+UNION ALL
+SELECT 'CURRENT_EARNINGS','Current Period Earnings','EQUITY',balance,store_id
+FROM current_earnings WHERE balance<>0
+ORDER BY store_id,account_code;
 
 CREATE OR REPLACE VIEW public.v_income_statement WITH (security_invoker=true) AS
 SELECT coa.account_code,coa.account_name,coa.account_type,
