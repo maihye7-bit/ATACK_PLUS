@@ -5,7 +5,11 @@
 1. Ensure `POSTGRES_SCHEMA_PHASE1_FIXED.sql` is applied (Phase 1 base schema)
 2. Ensure `ATACK_PLUS_PHASE2_BUSINESS_RPCS.sql` is applied (Phase 2 atomic operations)
 3. Apply `ATACK_PLUS_PHASE3_RETURNS_INVENTORY_ACCOUNTING.sql`
-4. Run Phase 3 tests in `TEST_PLAN_PHASE3_UPDATED.md` before connecting Flutter
+4. Apply `ATACK_PLUS_BUSINESS_RETURNS_REPAIR.sql`
+5. Apply `ATACK_PLUS_PURCHASE_RECEIVING_EXTENSIONS.sql`
+6. Apply `ATACK_PLUS_PURCHASE_AMENDMENTS.sql`
+7. Apply `ATACK_PLUS_PURCHASE_RETURN_RECEIPT_LINK.sql`
+8. Run Phase 3 and business regression tests in `TEST_PLAN_PHASE3_UPDATED.md` before connecting Flutter
 
 Do not apply this migration to production before a full backup and staging validation.
 
@@ -39,7 +43,7 @@ Do not apply this migration to production before a full backup and staging valid
   "id": "uuid-of-return",
   "invoice_id": "original-invoice-uuid",
   "return_number": "RET-001",
-  "refund_method": "CREDIT|CASH|BANK_TRANSFER|MOBILE",
+  "refund_method": "CREDIT",
   "return_condition": "GOOD|DEFECTIVE|UNSALEABLE",
   "reason": "Customer requested return",
   "items": [
@@ -47,6 +51,7 @@ Do not apply this migration to production before a full backup and staging valid
       "product_id": "product-uuid",
       "quantity": 2,
       "unit_id": "pcs",
+      "invoice_item_id": "original-invoice-item-uuid",
       "unit_price": 50.0000,
       "batch_number": "BATCH-001",
       "expiry_date": "2026-12-31T00:00:00Z"
@@ -69,9 +74,11 @@ Do not apply this migration to production before a full backup and staging valid
 - Creates sales return record
 - If `return_condition = "GOOD"`: increases stock, creates `RETURN_IN` movement
 - If `return_condition IN ('DEFECTIVE', 'UNSALEABLE')`: records return without stock increase
-- Creates customer ledger entry (negative amount)
-- Updates customer debt
-- Supports CREDIT, CASH, BANK_TRANSFER, MOBILE refund methods
+- Binds the return to the original invoice line and caps returned quantity at the unreturned sold quantity.
+- Uses the original line's net sale value and original cost snapshot; caller-supplied price is not trusted.
+- GOOD items increase stock at original cost; DEFECTIVE/UNSALEABLE items are recorded without increasing saleable stock.
+- Applies the return against outstanding customer debt first; any excess becomes customer credit.
+- Automatic cash/card/bank payouts are disabled; return value is credited to the customer.
 
 ### 2. Purchase Return
 
@@ -96,6 +103,7 @@ Do not apply this migration to production before a full backup and staging valid
       "product_id": "product-uuid",
       "quantity": 10,
       "unit_id": "pcs",
+      "purchase_item_id": "original-purchase-item-uuid",
       "unit_price": 75.0000,
       "batch_number": "BATCH-002",
       "expiry_date": "2026-11-15T00:00:00Z"
@@ -115,11 +123,12 @@ Do not apply this migration to production before a full backup and staging valid
 ```
 
 **Behavior**:
-- Creates purchase return record
-- Decreases stock (`RETURN_OUT` movement)
-- Creates supplier ledger entry (negative amount for credit method)
-- For CASH/BANK_TRANSFER: creates `supplier_payments` record
-- Updates supplier `current_debt` (reduction)
+- Binds the return to the original accepted receipt line and caps quantity at accepted (including approved excess) quantities not already returned.
+- A substitute return must pass `purchase_receipt_item_id` so the actual substitute product is removed.
+- Uses the original receipt unit, cost and supplier price snapshots; caller-supplied price is not trusted.
+- Decreases available stock with a `RETURN_OUT` movement.
+- Reduces supplier debt first; any excess becomes supplier credit.
+- Automatic cash/bank payouts are disabled; no supplier payment is created by a return.
 
 ### 3. Stock Adjustment
 
@@ -204,7 +213,7 @@ Returns: Revenue and Expense accounts
 |-----------|---------------------|
 | Sales Return | `sales.write` |
 | Purchase Return | `purchases.return` |
-| Stock Adjustment | `inventory.write` |
+| Stock Adjustment | `inventory.adjust` |
 | Check Expiry | `reports.view` |
 | Check Low Stock | `reports.view` |
 
@@ -356,7 +365,7 @@ class StockAdjustmentRepository {
 - [ ] Test debit/credit balance in journal entries
 - [ ] Test negative stock prevention
 - [ ] Test defect return (no stock increase)
-- [ ] Test CASH refund creates payment record
+- [ ] Test return credits customer/supplier balances without automatic cash payouts
 - [ ] Test audit logs created for all operations
 - [ ] Run Phase 3 test matrix and all tests pass
 - [ ] Performance test: 100 returns < 5 seconds
