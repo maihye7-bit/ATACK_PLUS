@@ -1,0 +1,80 @@
+name: SQL migration smoke test
+
+on:
+  push:
+    branches:
+      - repair/verified-fixes
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: atack_plus_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d atack_plus_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare minimal Supabase Auth compatibility layer
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          CREATE ROLE service_role NOLOGIN;
+          CREATE SCHEMA auth;
+          CREATE FUNCTION auth.uid() RETURNS uuid
+          LANGUAGE sql STABLE
+          AS $$ SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+          CREATE FUNCTION auth.role() RETURNS text
+          LANGUAGE sql STABLE
+          AS $$ SELECT NULLIF(current_setting('request.jwt.claim.role', true), '') $$;
+          SQL
+      - name: Apply Phase 1 schema
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/POSTGRES_SCHEMA_PHASE1_FIXED.sql"
+      - name: Apply Phase 2 business RPCs
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE2_BUSINESS_RPCS.sql"
+      - name: Apply Phase 3 returns, inventory and accounting
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE3_RETURNS_INVENTORY_ACCOUNTING.sql"
+      - name: Verify repaired SQL contracts
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='purchase_return_items'
+                AND column_name='quantity_unit_id'
+            ) THEN RAISE EXCEPTION 'purchase_return_items.quantity_unit_id missing'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='purchase_return_items'
+                AND column_name='unit_id'
+            ) THEN RAISE EXCEPTION 'Unexpected purchase_return_items.unit_id column'; END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+              WHERE n.nspname='public' AND p.proname='trg_log_change'
+            ) THEN RAISE EXCEPTION 'trg_log_change missing'; END IF;
+          END $$;
+          SQL
