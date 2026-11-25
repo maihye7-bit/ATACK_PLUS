@@ -70,6 +70,7 @@ DECLARE
     v_unit TEXT; v_original_unit TEXT; v_factor NUMERIC(18,6); v_primary TEXT;
     v_original_line_total NUMERIC(18,4); v_unit_price NUMERIC(18,4);
     v_cost NUMERIC(18,4); v_line_qty NUMERIC(18,4); v_line_total NUMERIC(18,4);
+    v_old_qty NUMERIC(18,4); v_current_cost NUMERIC(18,4); v_new_cost NUMERIC(18,4);
     v_condition TEXT; v_batch TEXT; v_expiry TIMESTAMPTZ; v_stock UUID;
 BEGIN
     IF v_location NOT IN ('main','warehouse','storage') THEN RAISE EXCEPTION 'Invalid stock location'; END IF;
@@ -105,20 +106,20 @@ BEGIN
       IF v_condition NOT IN ('GOOD','DEFECTIVE','UNSALEABLE') THEN RAISE EXCEPTION 'Invalid return condition'; END IF;
 
       IF v_item_id IS NULL THEN
-        SELECT ii.id,ii.quantity,ii.quantity_unit_id,ii.line_total,COALESCE(ii.cost_per_unit,0),
+        SELECT ii.id,ii.quantity,ii.quantity_unit_id,ii.line_total,COALESCE(ii.cost_per_unit,p.cost_price,0),
                ii.batch_number,ii.expiry_date
           INTO v_item_id,v_original_qty,v_original_unit,v_original_line_total,v_cost,v_batch,v_expiry
-          FROM public.invoice_items ii
+          FROM public.invoice_items ii JOIN public.products p ON p.id=ii.product_id
          WHERE ii.invoice_id=v_invoice_id AND ii.product_id=v_product
            AND (v_unit IS NULL OR ii.quantity_unit_id=v_unit)
            AND ii.quantity-COALESCE((SELECT SUM(ri.quantity) FROM public.return_items ri
                                      WHERE ri.invoice_item_id=ii.id),0)>=v_qty
          ORDER BY ii.id LIMIT 1 FOR UPDATE OF ii;
       ELSE
-        SELECT ii.quantity,ii.quantity_unit_id,ii.line_total,COALESCE(ii.cost_per_unit,0),
+        SELECT ii.quantity,ii.quantity_unit_id,ii.line_total,COALESCE(ii.cost_per_unit,p.cost_price,0),
                ii.batch_number,ii.expiry_date
           INTO v_original_qty,v_original_unit,v_original_line_total,v_cost,v_batch,v_expiry
-          FROM public.invoice_items ii
+          FROM public.invoice_items ii JOIN public.products p ON p.id=ii.product_id
          WHERE ii.id=v_item_id AND ii.invoice_id=v_invoice_id AND ii.product_id=v_product
          FOR UPDATE;
       END IF;
@@ -132,11 +133,14 @@ BEGIN
       END IF;
 
       SELECT p.primary_unit_id,
-             CASE WHEN v_original_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END
-        INTO v_primary,v_factor
+             CASE WHEN v_original_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END,
+             p.cost_price
+        INTO v_primary,v_factor,v_current_cost
         FROM public.products p LEFT JOIN public.product_units pu
           ON pu.product_id=p.id AND pu.unit_id=v_original_unit
-       WHERE p.id=v_product AND p.store_id=p_store_id AND p.is_active;
+       WHERE p.id=v_product AND p.store_id=p_store_id AND p.is_active
+       FOR UPDATE OF p;
+      v_cost:=COALESCE(v_cost,v_current_cost,0);
       IF v_factor IS NULL OR v_factor<=0 THEN RAISE EXCEPTION 'Original invoice unit conversion is invalid'; END IF;
 
       v_line_qty:=v_qty*v_factor;
@@ -153,9 +157,14 @@ BEGIN
       IF v_condition='GOOD' THEN
         INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
         VALUES(v_product,v_location,0,0) ON CONFLICT(product_id,location_id) DO NOTHING;
+        PERFORM 1 FROM public.stock WHERE product_id=v_product ORDER BY location_id FOR UPDATE;
+        SELECT COALESCE(SUM(quantity),0) INTO v_old_qty FROM public.stock WHERE product_id=v_product;
         SELECT id INTO v_stock FROM public.stock
-         WHERE product_id=v_product AND location_id=v_location FOR UPDATE;
+         WHERE product_id=v_product AND location_id=v_location;
         UPDATE public.stock SET quantity=quantity+v_line_qty WHERE id=v_stock;
+        v_new_cost:=CASE WHEN v_old_qty<=0 THEN v_cost
+          ELSE round(((v_old_qty*v_current_cost)+(v_line_qty*v_cost))/(v_old_qty+v_line_qty),4) END;
+        UPDATE public.products SET cost_price=v_new_cost,updated_at=NOW() WHERE id=v_product;
         INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
           reference_id,reference_type,batch_number,expiry_date,reason,user_id)
         VALUES(v_product,v_location,'RETURN_IN',v_line_qty,v_primary,v_cost,v_line_qty*v_cost,
