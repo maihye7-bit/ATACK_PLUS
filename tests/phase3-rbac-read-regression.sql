@@ -92,6 +92,18 @@ VALUES
  ('99100000-0000-4000-8000-000000000002','20100000-0000-4000-8000-000000000002',
   '10000000-0000-4000-8000-000000000001','rbac_read_owner','RBAC Read Owner',TRUE)
 ON CONFLICT(id) DO NOTHING;
+
+-- The pre-existing invoice 800...001 belongs to the owner; this one belongs
+-- to the seller and must be the only invoice visible to that seller.
+INSERT INTO public.invoices(
+ id,store_id,invoice_number,type,invoice_date,total_amount,created_by
+) VALUES (
+ '80000000-0000-4000-8000-000000000002',
+ '10000000-0000-4000-8000-000000000001',
+ 'RBAC-SELLER-OWN-001','SALE',NOW(),0,
+ '99100000-0000-4000-8000-000000000001'
+) ON CONFLICT(id) DO NOTHING;
+
 INSERT INTO public.user_roles(user_id,role_id)
 VALUES
  ('99100000-0000-4000-8000-000000000001','cashier'),
@@ -103,8 +115,24 @@ SET LOCAL ROLE authenticated;
 DO $seller_reads$
 DECLARE n INTEGER;
 BEGIN
-  SELECT count(*) INTO n FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000001';
-  IF n<>1 THEN RAISE EXCEPTION 'Seller cannot read permitted sales invoice'; END IF;
+  SELECT count(*) INTO n FROM public.invoices;
+  IF n<>1 OR NOT EXISTS(
+      SELECT 1 FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000002'
+    ) OR EXISTS(
+      SELECT 1 FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000001'
+    ) THEN
+    RAISE EXCEPTION 'Seller invoice visibility must contain only invoices created by that seller';
+  END IF;
+  IF EXISTS(SELECT 1 FROM public.invoice_items ii
+      JOIN public.invoices i ON i.id=ii.invoice_id
+      WHERE i.created_by<>'99100000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Seller can read another seller''s invoice items';
+  END IF;
+  IF EXISTS(SELECT 1 FROM public.sales_returns sr
+      JOIN public.invoices i ON i.id=sr.original_invoice_id
+      WHERE i.created_by<>'99100000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Seller can read another seller''s returns';
+  END IF;
   IF EXISTS(SELECT 1 FROM public.purchases) THEN RAISE EXCEPTION 'Seller can read purchases without delegated purchase permissions'; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.stock WHERE product_id='50000000-0000-4000-8000-000000000001') THEN RAISE EXCEPTION 'Seller cannot read inventory needed for sales'; END IF;
   IF EXISTS(SELECT 1 FROM public.journal_entries) THEN RAISE EXCEPTION 'Seller can read owner-only financial journals'; END IF;
@@ -115,7 +143,7 @@ BEGIN
   END IF;
   PERFORM * FROM public.check_low_stock('10000000-0000-4000-8000-000000000001');
   PERFORM * FROM public.check_inventory_expiry('10000000-0000-4000-8000-000000000001');
-  RAISE NOTICE 'PASS: seller sees sales, required product/stock data and own profile, but not purchasing or owner accounting';
+  RAISE NOTICE 'PASS: seller sees only their own invoices, related returns, required product/stock data and own profile';
 END
 $seller_reads$;
 RESET ROLE;
@@ -125,8 +153,11 @@ SET LOCAL ROLE authenticated;
 DO $owner_reads$
 DECLARE n INTEGER;
 BEGIN
-  IF NOT EXISTS(SELECT 1 FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Owner cannot read store sales';
+  SELECT count(*) INTO n FROM public.invoices;
+  IF n<2
+     OR NOT EXISTS(SELECT 1 FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000001')
+     OR NOT EXISTS(SELECT 1 FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000002') THEN
+    RAISE EXCEPTION 'Owner must see invoices from all sellers in the store';
   END IF;
   IF NOT EXISTS(SELECT 1 FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000001') THEN
     RAISE EXCEPTION 'Owner cannot read store purchases';
@@ -144,7 +175,7 @@ BEGIN
   IF EXISTS(SELECT 1 FROM public.users WHERE store_id<>'10000000-0000-4000-8000-000000000001') THEN
     RAISE EXCEPTION 'Owner read another store''s user profiles';
   END IF;
-  RAISE NOTICE 'PASS: owner sees all own-store sales, purchases, inventory, accounting and seller profiles with cross-store isolation';
+  RAISE NOTICE 'PASS: owner sees all sellers'' invoices, purchases, inventory, accounting and seller profiles with cross-store isolation';
 END
 $owner_reads$;
 RESET ROLE;
