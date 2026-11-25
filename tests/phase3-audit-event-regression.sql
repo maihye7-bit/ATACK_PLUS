@@ -11,6 +11,15 @@ UPDATE public.customers
    SET name='Audit Event Customer Updated'
  WHERE id='99000000-0000-4000-8000-000000000001';
 
+-- Lifecycle transitions must be represented distinctly: CREATE, VOID, then DELETE.
+INSERT INTO public.categories(id,store_id,name,is_active)
+VALUES('99000000-0000-4000-8000-000000000004',
+       '10000000-0000-4000-8000-000000000001','Audit Lifecycle Category',TRUE);
+UPDATE public.categories SET is_active=FALSE
+ WHERE id='99000000-0000-4000-8000-000000000004';
+DELETE FROM public.categories
+ WHERE id='99000000-0000-4000-8000-000000000004';
+
 -- Synchronization metadata alone is intentionally not a business audit event.
 UPDATE public.customers SET sync_status='SYNCED'
  WHERE id='99000000-0000-4000-8000-000000000001';
@@ -45,6 +54,22 @@ BEGIN
   IF v_update_old->>'name' IS DISTINCT FROM 'Audit Event Customer'
      OR v_update_new->>'name' IS DISTINCT FROM 'Audit Event Customer Updated' THEN
     RAISE EXCEPTION 'UPDATE audit before/after snapshots are incorrect';
+  END IF;
+  IF (SELECT count(*) FROM public.audit_logs
+       WHERE store_id='10000000-0000-4000-8000-000000000001'
+         AND entity_type='categories'
+         AND entity_id='99000000-0000-4000-8000-000000000004')<>3
+     OR NOT EXISTS(SELECT 1 FROM public.audit_logs
+       WHERE entity_type='categories' AND entity_id='99000000-0000-4000-8000-000000000004'
+         AND action='CREATE' AND new_values_json->>'name'='Audit Lifecycle Category')
+     OR NOT EXISTS(SELECT 1 FROM public.audit_logs
+       WHERE entity_type='categories' AND entity_id='99000000-0000-4000-8000-000000000004'
+         AND action='VOID' AND old_values_json->>'is_active'='true'
+         AND new_values_json->>'is_active'='false')
+     OR NOT EXISTS(SELECT 1 FROM public.audit_logs
+       WHERE entity_type='categories' AND entity_id='99000000-0000-4000-8000-000000000004'
+         AND action='DELETE' AND old_values_json->>'name'='Audit Lifecycle Category') THEN
+    RAISE EXCEPTION 'Category lifecycle audit events or snapshots are incomplete';
   END IF;
   RAISE NOTICE 'PASS: authenticated business changes are audited with before/after snapshots and no auth secrets or sync-only noise';
 END
