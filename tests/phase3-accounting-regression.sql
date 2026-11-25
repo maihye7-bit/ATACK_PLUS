@@ -106,6 +106,53 @@ BEGIN
  ) THEN RAISE EXCEPTION 'A purchase return has no journal entry'; END IF;
 
  IF EXISTS(
+   SELECT 1 FROM public.purchase_receipts pr
+   WHERE pr.store_id=v_store AND pr.receipt_number NOT LIKE 'INITIAL-%'
+     AND EXISTS(SELECT 1 FROM public.purchase_receipt_items pri
+       WHERE pri.receipt_id=pr.id AND pri.accepted_quantity+pri.excess_quantity>0)
+     AND NOT EXISTS(SELECT 1 FROM public.journal_entries je
+       WHERE je.store_id=pr.store_id AND je.source_type='TRANSFER' AND je.source_id=pr.id)
+ ) THEN RAISE EXCEPTION 'A subsequent purchase receipt has no inventory/transit reclassification'; END IF;
+ IF EXISTS(
+   SELECT 1 FROM public.purchase_amendments pa
+   WHERE pa.store_id=v_store AND pa.id='75000000-0000-4000-8000-000000000007'
+     AND NOT EXISTS(SELECT 1 FROM public.journal_entries je
+       WHERE je.store_id=pa.store_id AND je.source_type='ADJUSTMENT' AND je.source_id=pa.id)
+ ) THEN RAISE EXCEPTION 'Purchase amendment journal is missing'; END IF;
+ IF EXISTS(
+   SELECT 1 FROM public.purchase_closures pc
+   WHERE pc.store_id=v_store AND pc.id='74000000-0000-4000-8000-000000000005'
+     AND (pc.financial_delta<>-30 OR NOT EXISTS(
+       SELECT 1 FROM public.journal_entries je
+       WHERE je.store_id=pc.store_id AND je.source_type='ADJUSTMENT' AND je.source_id=pc.id))
+ ) THEN RAISE EXCEPTION 'Purchase closure financial cancellation journal is missing'; END IF;
+
+ -- Goods in transit must reconcile to the ordered quantity still outstanding after receipts, closures and amendments.
+ IF EXISTS(
+   SELECT 1 FROM public.purchases p
+   WHERE p.store_id=v_store AND ABS(
+     COALESCE((
+       SELECT SUM(CASE WHEN gl.entry_type='DEBIT' THEN gl.amount ELSE -gl.amount END)
+       FROM public.general_ledger gl
+       JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+       JOIN public.journal_entries je ON je.id=gl.journal_entry_id
+       WHERE gl.store_id=p.store_id AND coa.account_code='1210'
+         AND (
+           (je.source_type='PURCHASE' AND je.source_id=p.id)
+           OR (je.source_type='TRANSFER' AND je.source_id IN
+               (SELECT id FROM public.purchase_receipts WHERE purchase_id=p.id))
+           OR (je.source_type='ADJUSTMENT' AND je.source_id IN
+               (SELECT id FROM public.purchase_amendments WHERE purchase_id=p.id))
+           OR (je.source_type='ADJUSTMENT' AND je.source_id IN
+               (SELECT id FROM public.purchase_closures WHERE purchase_id=p.id))
+         )
+     ),0)-
+     COALESCE((SELECT SUM((pi.quantity-pi.received_quantity-pi.closed_quantity)*pi.unit_price)
+       FROM public.purchase_items pi WHERE pi.purchase_id=p.id),0)
+   )>0.0001
+ ) THEN RAISE EXCEPTION 'Goods-in-transit balance does not reconcile to outstanding purchase quantities'; END IF;
+
+ IF EXISTS(
    SELECT 1 FROM public.journal_entries je
    LEFT JOIN public.general_ledger gl ON gl.journal_entry_id=je.id
    GROUP BY je.id,je.total_debit,je.total_credit
