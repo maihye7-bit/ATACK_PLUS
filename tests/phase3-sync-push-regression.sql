@@ -11,6 +11,7 @@ DECLARE
   v_replay UUID;
   v_result JSONB;
   v_denied BOOLEAN;
+  v_error TEXT;
   v_count INTEGER;
   v_name TEXT;
   v_retry UUID;
@@ -52,7 +53,10 @@ BEGIN
       jsonb_build_object('id','93000000-0000-4000-8000-000000000011',
         'store_id',v_store,'name','Different payload')
     );
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Idempotency key reused with different operation or payload%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Reused operation key with a different payload was accepted'; END IF;
 
@@ -66,7 +70,10 @@ BEGIN
       jsonb_build_object('id','93000000-0000-4000-8000-000000000012',
         'store_id',v_store_b,'name','Cross store')
     );
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Authenticated user does not belong to the requested store%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Cross-store Outbox enqueue was accepted'; END IF;
 
@@ -81,7 +88,10 @@ BEGIN
         'store_id',v_store,'name','Protected product','primary_unit_id','pcs',
         'cost_price',1,'default_sale_price',2)
     );
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Outbox payload contains protected or unsupported fields%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Protected product price/cost fields entered generic Outbox'; END IF;
 
@@ -94,7 +104,10 @@ BEGIN
       jsonb_build_object('id','40000000-0000-4000-8000-000000000001',
         'store_id',v_store,'current_debt',0,'total_sales',0)
     );
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Outbox payload contains protected or unsupported fields%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Derived customer balances entered generic Outbox'; END IF;
 
@@ -107,7 +120,10 @@ BEGIN
       jsonb_build_object('id','93000000-0000-4000-8000-000000000010',
         'store_id',v_store,'name','Hidden without tombstone','is_active',FALSE)
     );
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Outbox payload contains protected or unsupported fields%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Generic UPDATE bypassed the tombstone soft-delete path'; END IF;
 
@@ -190,7 +206,10 @@ BEGIN
   v_denied:=FALSE;
   BEGIN
     PERFORM public.resolve_sync_conflict(v_role_conflict,'ACCEPT_REMOTE',v_user,NULL);
-  EXCEPTION WHEN OTHERS THEN v_denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Generic conflict resolution is disabled for table user_roles%' THEN RAISE; END IF;
+    v_denied:=TRUE;
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Generic conflict resolution allowed user_roles mutation'; END IF;
 
