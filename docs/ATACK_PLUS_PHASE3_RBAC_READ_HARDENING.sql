@@ -86,6 +86,90 @@ BEGIN
         OR public.has_store_permission(public.current_user_store_id(),'users.manage')
       )
     );
+
+  -- Sales data is private to its seller. The owner (users.manage) can see
+  -- every seller's invoices and their dependent line/return records.
+  DROP POLICY IF EXISTS rbac_read_invoices ON public.invoices;
+  CREATE POLICY rbac_read_invoices ON public.invoices
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (
+      public.has_store_permission(public.current_user_store_id(),'sales.read')
+      AND (
+        public.has_store_permission(public.current_user_store_id(),'users.manage')
+        OR created_by = (
+          SELECT u.id FROM public.users u
+           WHERE u.auth_user_id=auth.uid()
+             AND u.store_id=public.current_user_store_id()
+             AND u.is_active=TRUE
+           LIMIT 1
+        )
+      )
+    );
+
+  DROP POLICY IF EXISTS rbac_read_invoice_items ON public.invoice_items;
+  CREATE POLICY rbac_read_invoice_items ON public.invoice_items
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (
+      EXISTS (
+        SELECT 1 FROM public.invoices i
+         WHERE i.id=invoice_items.invoice_id
+           AND public.has_store_permission(i.store_id,'sales.read')
+           AND (
+             public.has_store_permission(i.store_id,'users.manage')
+             OR i.created_by = (
+               SELECT u.id FROM public.users u
+                WHERE u.auth_user_id=auth.uid()
+                  AND u.store_id=i.store_id AND u.is_active=TRUE
+                LIMIT 1
+             )
+           )
+      )
+    );
+
+  DROP POLICY IF EXISTS rbac_read_sales_returns ON public.sales_returns;
+  CREATE POLICY rbac_read_sales_returns ON public.sales_returns
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (
+      EXISTS (
+        SELECT 1 FROM public.invoices i
+         WHERE i.id=sales_returns.original_invoice_id
+           AND i.store_id=sales_returns.store_id
+           AND public.has_store_permission(i.store_id,'sales.read')
+           AND (
+             public.has_store_permission(i.store_id,'users.manage')
+             OR i.created_by = (
+               SELECT u.id FROM public.users u
+                WHERE u.auth_user_id=auth.uid()
+                  AND u.store_id=i.store_id AND u.is_active=TRUE
+                LIMIT 1
+             )
+           )
+      )
+    );
+
+  DROP POLICY IF EXISTS rbac_read_return_items ON public.return_items;
+  CREATE POLICY rbac_read_return_items ON public.return_items
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (
+      EXISTS (
+        SELECT 1
+          FROM public.sales_returns sr
+          JOIN public.invoices i ON i.id=sr.original_invoice_id
+         WHERE sr.id=return_items.return_id
+           AND i.store_id=sr.store_id
+           AND public.has_store_permission(i.store_id,'sales.read')
+           AND (
+             public.has_store_permission(i.store_id,'users.manage')
+             OR i.created_by = (
+               SELECT u.id FROM public.users u
+                WHERE u.auth_user_id=auth.uid()
+                  AND u.store_id=i.store_id AND u.is_active=TRUE
+                LIMIT 1
+             )
+           )
+      )
+    );
+
 END
 $rbac_read_policies$;
 
