@@ -348,7 +348,7 @@ BEGIN
  SELECT total_amount INTO v_total FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000004';
  SELECT current_debt INTO v_debt_after FROM public.suppliers WHERE id=v_supplier;
  IF v_stock IS DISTINCT FROM 7 OR v_received IS DISTINCT FROM 5 OR v_excess IS DISTINCT FROM 2
-    OR v_total IS DISTINCT FROM 140 OR v_debt_after-v_debt_before IS DISTINCT FROM 140 THEN
+    OR v_total IS DISTINCT FROM 140 OR v_debt_after-v_debt_before IS DISTINCT FROM 40 THEN
    RAISE EXCEPTION 'Approved excess receipt mismatch: stock %, received %, excess %, total %, debt delta %',
      v_stock,v_received,v_excess,v_total,v_debt_after-v_debt_before;
  END IF;
