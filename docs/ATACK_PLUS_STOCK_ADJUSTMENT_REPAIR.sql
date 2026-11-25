@@ -121,6 +121,12 @@ BEGIN
    v_id,'adjustment','Stock adjustment: '||v_reason,v_user);
 
  IF v_total>0 THEN
+   INSERT INTO public.chart_of_accounts(store_id,account_code,account_name,account_type,is_active)
+   VALUES
+     (p_store_id,'1200','Inventory','ASSET',TRUE),
+     (p_store_id,'4100','Inventory Adjustment Gain','REVENUE',TRUE),
+     (p_store_id,'5100','Inventory Adjustment Loss','EXPENSE',TRUE)
+   ON CONFLICT(store_id,account_code) DO NOTHING;
    SELECT id INTO v_inventory_account FROM public.chart_of_accounts
     WHERE store_id=p_store_id AND account_code='1200' AND is_active;
    IF v_type='INCREASE' THEN
