@@ -10,6 +10,14 @@ ALTER TABLE public.purchase_returns
   ADD COLUMN IF NOT EXISTS applied_to_debt NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(applied_to_debt>=0),
   ADD COLUMN IF NOT EXISTS supplier_credit_created NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(supplier_credit_created>=0);
 
+ALTER TABLE public.purchase_amendments
+  ADD COLUMN IF NOT EXISTS debt_reduction NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(debt_reduction>=0),
+  ADD COLUMN IF NOT EXISTS supplier_credit_created NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(supplier_credit_created>=0);
+ALTER TABLE public.purchase_closures
+  ADD COLUMN IF NOT EXISTS financial_delta NUMERIC(18,4) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS applied_to_debt NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(applied_to_debt>=0),
+  ADD COLUMN IF NOT EXISTS supplier_credit_created NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(supplier_credit_created>=0);
+
 -- Complete the per-store chart of accounts. TVA is intentionally absent (D-029).
 CREATE OR REPLACE FUNCTION public.seed_default_chart_of_accounts(p_store_id UUID)
 RETURNS VOID
@@ -490,6 +498,227 @@ REVOKE ALL ON FUNCTION public.process_sale_return_pre_accounting(UUID,UUID,JSONB
 REVOKE ALL ON FUNCTION public.process_purchase_return_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.process_sale_return(UUID,UUID,JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.process_purchase_return(UUID,UUID,JSONB) TO authenticated;
+
+-- Subsequent purchase receipts reclassify goods-in-transit into inventory.
+ALTER FUNCTION public.process_purchase_receipt(UUID,UUID,JSONB) RENAME TO process_purchase_receipt_pre_accounting;
+REVOKE ALL ON FUNCTION public.process_purchase_receipt_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+CREATE OR REPLACE FUNCTION public.process_purchase_receipt(
+ p_store_id UUID,p_operation_id UUID,p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,extensions,public,pg_temp
+AS $purchase_receipt_accounting$
+DECLARE
+ v_result JSONB; v_purchase UUID:=(p_payload->>'purchase_id')::UUID;
+ v_receipt UUID:=(p_payload->>'id')::UUID; v_supplier UUID;
+ v_old_debt NUMERIC(18,4); v_new_debt NUMERIC(18,4);
+ v_old_credit NUMERIC(18,4); v_new_credit NUMERIC(18,4);
+ v_old_total NUMERIC(18,4); v_new_total NUMERIC(18,4); v_delta NUMERIC(18,4);
+ v_debt_delta NUMERIC(18,4); v_credit_delta NUMERIC(18,4);
+ v_receipt_value NUMERIC(18,4); v_transit_amount NUMERIC(18,4);
+ v_transit_balance NUMERIC(18,4); v_variance NUMERIC(18,4);
+ v_user UUID; v_lines JSONB:='[]'::JSONB;
+BEGIN
+ SELECT p.supplier_id,p.total_amount,s.current_debt,s.credit_balance
+   INTO v_supplier,v_old_total,v_old_debt,v_old_credit
+   FROM public.purchases p JOIN public.suppliers s ON s.id=p.supplier_id
+  WHERE p.id=v_purchase AND p.store_id=p_store_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Purchase not found before receipt'; END IF;
+
+ v_result:=public.process_purchase_receipt_pre_accounting(p_store_id,p_operation_id,p_payload);
+ IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
+
+ SELECT p.total_amount,s.current_debt,s.credit_balance
+   INTO v_new_total,v_new_debt,v_new_credit
+   FROM public.purchases p JOIN public.suppliers s ON s.id=p.supplier_id
+  WHERE p.id=v_purchase AND p.store_id=p_store_id;
+ SELECT received_by INTO v_user FROM public.purchase_receipts WHERE id=v_receipt AND purchase_id=v_purchase;
+ SELECT COALESCE(SUM((accepted_quantity+excess_quantity)*unit_cost),0)
+   INTO v_receipt_value FROM public.purchase_receipt_items WHERE receipt_id=v_receipt;
+ v_delta:=v_new_total-v_old_total;
+ v_debt_delta:=v_new_debt-v_old_debt;
+ v_credit_delta:=v_new_credit-v_old_credit;
+ IF round(v_debt_delta-v_credit_delta,4)<>round(v_delta,4) THEN
+   RAISE EXCEPTION 'Receipt supplier balance delta does not reconcile to purchase value';
+ END IF;
+
+ v_transit_amount:=GREATEST(v_receipt_value-v_delta,0);
+ v_variance:=GREATEST(v_delta-v_receipt_value,0);
+ SELECT COALESCE(SUM(CASE WHEN gl.entry_type='DEBIT' THEN gl.amount ELSE -gl.amount END),0)
+   INTO v_transit_balance
+   FROM public.general_ledger gl
+   JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+   JOIN public.journal_entries je ON je.id=gl.journal_entry_id
+  WHERE gl.store_id=p_store_id AND coa.account_code='1210'
+    AND (
+      (je.source_type='PURCHASE' AND je.source_id=v_purchase)
+      OR (je.source_type='TRANSFER' AND je.source_id IN
+          (SELECT id FROM public.purchase_receipts WHERE purchase_id=v_purchase))
+      OR (je.source_type='ADJUSTMENT' AND je.source_id IN
+          (SELECT id FROM public.purchase_amendments WHERE purchase_id=v_purchase))
+      OR (je.source_type='ADJUSTMENT' AND je.source_id IN
+          (SELECT id FROM public.purchase_closures WHERE purchase_id=v_purchase))
+    );
+ IF v_transit_amount>v_transit_balance+0.0001 THEN
+   RAISE EXCEPTION 'Receipt exceeds this purchase goods-in-transit balance: requested %, available %',
+     v_transit_amount,v_transit_balance USING ERRCODE='23514';
+ END IF;
+
+ IF v_receipt_value>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_receipt_value,'description','Received purchase inventory'));
+ END IF;
+ IF v_transit_amount>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1210','entry_type','CREDIT','amount',v_transit_amount,'description','Goods received from transit'));
+ END IF;
+ IF v_debt_delta>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2000','entry_type','CREDIT','amount',v_debt_delta,'description','Approved receipt payable increase'));
+ ELSIF v_debt_delta<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2000','entry_type','DEBIT','amount',-v_debt_delta,'description','Approved receipt payable reduction'));
+ END IF;
+ IF v_credit_delta>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2200','entry_type','DEBIT','amount',v_credit_delta,'description','Supplier advance created by receipt adjustment'));
+ END IF;
+ IF v_variance>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5200','entry_type','DEBIT','amount',v_variance,'description','Receipt purchase cost variance'));
+ END IF;
+ IF jsonb_array_length(v_lines)>=2 THEN
+   PERFORM public._post_journal_entry(p_store_id,'TRANSFER',v_receipt,
+     'Purchase receipt '||v_receipt::TEXT,v_user,v_lines);
+ END IF;
+ RETURN v_result;
+END;
+$purchase_receipt_accounting$;
+
+-- Amendments split their financial delta between already-received inventory and goods in transit.
+ALTER FUNCTION public.process_purchase_amendment(UUID,UUID,JSONB) RENAME TO process_purchase_amendment_pre_accounting;
+REVOKE ALL ON FUNCTION public.process_purchase_amendment_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+CREATE OR REPLACE FUNCTION public.process_purchase_amendment(
+ p_store_id UUID,p_operation_id UUID,p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,extensions,public,pg_temp
+AS $purchase_amendment_accounting$
+DECLARE
+ v_result JSONB; v_id UUID:=(p_payload->>'id')::UUID;
+ v_purchase UUID; v_user UUID; v_old JSONB; v_new JSONB; v_old_row JSONB; v_row JSONB;
+ v_item UUID; v_old_qty NUMERIC(18,4); v_old_price NUMERIC(18,4);
+ v_new_qty NUMERIC(18,4); v_new_price NUMERIC(18,4);
+ v_received NUMERIC(18,4); v_closed NUMERIC(18,4);
+ v_received_delta NUMERIC(18,4):=0; v_transit_delta NUMERIC(18,4):=0;
+ v_delta NUMERIC(18,4); v_debt_reduction NUMERIC(18,4); v_supplier_credit NUMERIC(18,4);
+ v_lines JSONB:='[]'::JSONB;
+BEGIN
+ v_result:=public.process_purchase_amendment_pre_accounting(p_store_id,p_operation_id,p_payload);
+ IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
+ SELECT purchase_id,changed_by,old_values_json,new_values_json,debt_reduction,supplier_credit_created
+   INTO v_purchase,v_user,v_old,v_new,v_debt_reduction,v_supplier_credit
+   FROM public.purchase_amendments WHERE id=v_id AND store_id=p_store_id;
+ v_delta:=(v_result->>'financial_delta')::NUMERIC;
+ FOR v_row IN SELECT value FROM jsonb_array_elements(v_new)
+ LOOP
+   v_item:=(v_row->>'purchase_item_id')::UUID;
+   SELECT value INTO v_old_row FROM jsonb_array_elements(v_old)
+    WHERE value->>'purchase_item_id'=v_item::TEXT;
+   v_old_qty:=(v_old_row->>'quantity')::NUMERIC;
+   v_old_price:=(v_old_row->>'unit_price')::NUMERIC;
+   v_new_qty:=(v_row->>'quantity')::NUMERIC;
+   v_new_price:=(v_row->>'unit_price')::NUMERIC;
+   v_received:=(v_row->>'received_quantity')::NUMERIC;
+   v_closed:=(v_row->>'closed_quantity')::NUMERIC;
+   v_received_delta:=v_received_delta+(v_received*(v_new_price-v_old_price));
+   v_transit_delta:=v_transit_delta+
+     ((v_new_qty-v_received-v_closed)*v_new_price)-
+     ((v_old_qty-v_received-v_closed)*v_old_price);
+ END LOOP;
+ IF round(v_received_delta+v_transit_delta,4)<>round(v_delta,4) THEN
+   RAISE EXCEPTION 'Purchase amendment received/transit allocation does not reconcile: %, %, total %',
+     v_received_delta,v_transit_delta,v_delta;
+ END IF;
+ IF v_received_delta>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_received_delta,'description','Amended received inventory value'));
+ ELSIF v_received_delta<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','CREDIT','amount',-v_received_delta,'description','Amended received inventory value'));
+ END IF;
+ IF v_transit_delta>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1210','entry_type','DEBIT','amount',v_transit_delta,'description','Amended goods-in-transit value'));
+ ELSIF v_transit_delta<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1210','entry_type','CREDIT','amount',-v_transit_delta,'description','Amended goods-in-transit value'));
+ END IF;
+ IF v_delta>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2000','entry_type','CREDIT','amount',v_delta,'description','Purchase amendment payable increase'));
+ ELSIF v_delta<0 THEN
+   IF v_debt_reduction>0 THEN
+     v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2000','entry_type','DEBIT','amount',v_debt_reduction,'description','Purchase amendment payable reduction'));
+   END IF;
+   IF v_supplier_credit>0 THEN
+     v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2200','entry_type','DEBIT','amount',v_supplier_credit,'description','Supplier advance created by purchase amendment'));
+   END IF;
+ END IF;
+ IF jsonb_array_length(v_lines)>=2 THEN
+   PERFORM public._post_journal_entry(p_store_id,'ADJUSTMENT',v_id,
+     'Purchase amendment '||v_id::TEXT,v_user,v_lines);
+ END IF;
+ RETURN v_result;
+END;
+$purchase_amendment_accounting$;
+
+-- Closing outstanding quantities cancels both the goods-in-transit asset and supplier obligation.
+ALTER FUNCTION public.process_purchase_close_remaining(UUID,UUID,JSONB) RENAME TO process_purchase_close_remaining_pre_accounting;
+REVOKE ALL ON FUNCTION public.process_purchase_close_remaining_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+CREATE OR REPLACE FUNCTION public.process_purchase_close_remaining(
+ p_store_id UUID,p_operation_id UUID,p_payload JSONB
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,extensions,public,pg_temp
+AS $purchase_close_accounting$
+DECLARE
+ v_result JSONB; v_id UUID:=(p_payload->>'id')::UUID; v_user UUID;
+ v_total NUMERIC(18,4); v_applied NUMERIC(18,4); v_credit NUMERIC(18,4);
+ v_transit_balance NUMERIC(18,4); v_lines JSONB:='[]'::JSONB;
+BEGIN
+ v_result:=public.process_purchase_close_remaining_pre_accounting(p_store_id,p_operation_id,p_payload);
+ IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
+ SELECT closed_by,-financial_delta,applied_to_debt,supplier_credit_created
+   INTO v_user,v_total,v_applied,v_credit
+   FROM public.purchase_closures WHERE id=v_id AND store_id=p_store_id;
+ IF v_total>0 THEN
+   SELECT COALESCE(SUM(CASE WHEN gl.entry_type='DEBIT' THEN gl.amount ELSE -gl.amount END),0)
+     INTO v_transit_balance
+     FROM public.general_ledger gl
+     JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+     JOIN public.journal_entries je ON je.id=gl.journal_entry_id
+    WHERE gl.store_id=p_store_id AND coa.account_code='1210'
+      AND (
+        (je.source_type='PURCHASE' AND je.source_id=(SELECT purchase_id FROM public.purchase_closures WHERE id=v_id))
+        OR (je.source_type='TRANSFER' AND je.source_id IN
+            (SELECT id FROM public.purchase_receipts WHERE purchase_id=(SELECT purchase_id FROM public.purchase_closures WHERE id=v_id)))
+        OR (je.source_type='ADJUSTMENT' AND je.source_id IN
+            (SELECT id FROM public.purchase_amendments WHERE purchase_id=(SELECT purchase_id FROM public.purchase_closures WHERE id=v_id)))
+      );
+   IF v_total>v_transit_balance+0.0001 THEN
+     RAISE EXCEPTION 'Closed quantity exceeds goods-in-transit balance: requested %, available %',
+       v_total,v_transit_balance USING ERRCODE='23514';
+   END IF;
+   IF v_applied>0 THEN
+     v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2000','entry_type','DEBIT','amount',v_applied,'description','Cancelled supplier payable'));
+   END IF;
+   IF v_credit>0 THEN
+     v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','2200','entry_type','DEBIT','amount',v_credit,'description','Supplier advance from purchase closure'));
+   END IF;
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1210','entry_type','CREDIT','amount',v_total,'description','Cancel unreceived goods in transit'));
+   PERFORM public._post_journal_entry(p_store_id,'ADJUSTMENT',v_id,
+     'Purchase closure '||v_id::TEXT,v_user,v_lines);
+ END IF;
+ RETURN v_result;
+END;
+$purchase_close_accounting$;
+
+REVOKE ALL ON FUNCTION public.process_purchase_receipt_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.process_purchase_amendment_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.process_purchase_close_remaining_pre_accounting(UUID,UUID,JSONB) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.process_purchase_receipt(UUID,UUID,JSONB) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.process_purchase_amendment(UUID,UUID,JSONB) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.process_purchase_close_remaining(UUID,UUID,JSONB) TO authenticated;
 
 -- Trial balance and financial reports are store-scoped and execute with caller RLS.
 CREATE OR REPLACE VIEW public.v_trial_balance WITH (security_invoker=true) AS
