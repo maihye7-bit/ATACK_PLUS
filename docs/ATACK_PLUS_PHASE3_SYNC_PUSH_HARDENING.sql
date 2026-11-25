@@ -6,6 +6,10 @@ BEGIN;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sync_outbox_store_idempotency
     ON public.sync_outbox(store_id, idempotency_key);
 
+-- The base schema installs an updated_at trigger on sync_conflicts; provide its target column.
+ALTER TABLE public.sync_conflicts
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 -- A reused operation key must identify the same operation, entity and payload.
 CREATE OR REPLACE FUNCTION public.atomic_process_operation(
     p_store_id UUID, p_operation_id UUID, p_operation_type TEXT,
