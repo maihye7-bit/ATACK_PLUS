@@ -68,7 +68,7 @@ BEGIN
    WHERE u.auth_user_id=auth.uid() AND u.store_id=v_store_id AND u.is_active=TRUE;
   IF v_actor_id IS NULL THEN RAISE EXCEPTION 'Active store user not found'; END IF;
 
-  IF p_action NOT IN ('GRANT','REVOKE') THEN
+  IF p_action IS NULL OR p_action NOT IN ('GRANT','REVOKE') THEN
     RAISE EXCEPTION 'Action must be GRANT or REVOKE';
   END IF;
   IF p_target_user_id IS NULL OR NULLIF(btrim(p_role_id),'') IS NULL THEN
