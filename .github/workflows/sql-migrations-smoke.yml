@@ -152,6 +152,14 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-user-account-security-regression.sql"
+      - name: Apply complete security catalog hardening
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE3_SECURITY_CATALOG_HARDENING.sql"
+      - name: Run complete security catalog regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-security-catalog-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
