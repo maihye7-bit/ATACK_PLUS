@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS public.purchase_receipt_items (
 CREATE INDEX IF NOT EXISTS idx_purchase_receipts_purchase ON public.purchase_receipts(purchase_id,received_at);
 CREATE INDEX IF NOT EXISTS idx_purchase_receipt_items_item ON public.purchase_receipt_items(purchase_item_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_receipt_items_actual_product ON public.purchase_receipt_items(actual_product_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_receipt_item_per_line ON public.purchase_receipt_items(receipt_id,purchase_item_id);
+ALTER TABLE public.purchase_receipt_items DROP CONSTRAINT IF EXISTS purchase_receipt_items_photo_paths_array_check;
+ALTER TABLE public.purchase_receipt_items ADD CONSTRAINT purchase_receipt_items_photo_paths_array_check
+  CHECK (jsonb_typeof(photo_paths)='array');
 
 CREATE TABLE IF NOT EXISTS public.purchase_closures (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -185,6 +189,7 @@ DECLARE
  v_stock UUID; v_supplier UUID; v_excess_value NUMERIC(18,4):=0;
  v_accepted_total NUMERIC(18,4):=0; v_excess_total NUMERIC(18,4):=0;
  v_rejected_total NUMERIC(18,4):=0; v_reason TEXT; v_sub_reason TEXT;
+ v_purchase_delta NUMERIC(18,4):=0; v_debt_reduction NUMERIC(18,4):=0; v_credit_increase NUMERIC(18,4):=0;
  v_approver UUID; v_batch TEXT; v_expiry TIMESTAMPTZ;
 BEGIN
  IF v_location NOT IN ('main','warehouse','storage') THEN RAISE EXCEPTION 'Invalid stock location'; END IF;
@@ -277,7 +282,7 @@ BEGIN
      received_date=CASE WHEN (received_quantity+v_qty)>=quantity THEN NOW() ELSE received_date END
     WHERE id=v_item;
 
-   v_excess_value:=v_excess_value+(v_excess*v_actual_price);
+   v_purchase_delta:=v_purchase_delta+(v_qty*(v_actual_price-v_price))+(v_excess*v_actual_price);
    v_accepted_total:=v_accepted_total+(v_qty*v_factor);
    v_excess_total:=v_excess_total+(v_excess*v_factor);
    v_rejected_total:=v_rejected_total+v_rejected;
@@ -290,21 +295,33 @@ BEGIN
    END IF;
  END LOOP;
 
- IF v_excess_value>0 THEN
-   UPDATE public.purchases SET subtotal=subtotal+v_excess_value,total_amount=total_amount+v_excess_value,
-     remaining_amount=remaining_amount+v_excess_value,updated_at=NOW() WHERE id=v_purchase;
-   UPDATE public.suppliers SET current_debt=current_debt+v_excess_value,updated_at=NOW() WHERE id=v_supplier;
-   INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
-   SELECT v_supplier,'ADJUSTMENT',v_excess_value,current_debt-credit_balance+v_excess_value,
-     v_receipt,'Approved excess receipt for purchase '||v_number,v_user
-    FROM public.suppliers WHERE id=v_supplier;
+ IF v_purchase_delta<>0 THEN
+   UPDATE public.purchases SET subtotal=subtotal+v_purchase_delta,total_amount=total_amount+v_purchase_delta,
+     remaining_amount=GREATEST(remaining_amount+v_purchase_delta,0),updated_at=NOW() WHERE id=v_purchase;
+   IF v_purchase_delta>0 THEN
+     UPDATE public.suppliers SET current_debt=current_debt+v_purchase_delta,updated_at=NOW() WHERE id=v_supplier;
+     INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
+     SELECT v_supplier,'ADJUSTMENT',v_purchase_delta,current_debt-credit_balance+v_purchase_delta,
+       v_receipt,'Approved excess/substitute price adjustment for purchase '||v_number,v_user
+      FROM public.suppliers WHERE id=v_supplier;
+   ELSE
+     SELECT LEAST(current_debt,-v_purchase_delta) INTO v_debt_reduction
+       FROM public.suppliers WHERE id=v_supplier FOR UPDATE;
+     v_credit_increase:=(-v_purchase_delta)-v_debt_reduction;
+     UPDATE public.suppliers SET current_debt=current_debt-v_debt_reduction,
+       credit_balance=credit_balance+v_credit_increase,updated_at=NOW() WHERE id=v_supplier;
+     INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
+     SELECT v_supplier,'ADJUSTMENT',v_purchase_delta,
+       (current_debt-v_debt_reduction)-(credit_balance+v_credit_increase),
+       v_receipt,'Approved substitute price adjustment for purchase '||v_number,v_user
+      FROM public.suppliers WHERE id=v_supplier;
+   END IF;
  END IF;
 
  UPDATE public.purchases p SET receiving_status=CASE
+   WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.closed_quantity>0) THEN 'CLOSED_PARTIAL'
    WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id
-                    AND pi.received_quantity+pi.closed_quantity<pi.quantity) THEN
-       CASE WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.closed_quantity>0)
-            THEN 'CLOSED_PARTIAL' ELSE 'COMPLETE' END
+                    AND pi.received_quantity<pi.quantity) THEN 'COMPLETE'
    WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id
                  AND (pi.received_quantity>0 OR pi.excess_received_quantity>0)) THEN 'PARTIAL'
    ELSE 'PENDING' END,
@@ -354,8 +371,9 @@ BEGIN
    VALUES(p_store_id,v_id,v_item,v_qty,COALESCE(NULLIF(v_row->>'reason',''),v_reason));
  END LOOP;
  UPDATE public.purchases p SET receiving_status=CASE
+   WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.closed_quantity>0) THEN 'CLOSED_PARTIAL'
    WHEN NOT EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id
-                    AND pi.received_quantity+pi.closed_quantity<pi.quantity) THEN 'CLOSED_PARTIAL'
+                    AND pi.received_quantity<pi.quantity) THEN 'COMPLETE'
    WHEN EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id
                  AND (pi.received_quantity>0 OR pi.excess_received_quantity>0)) THEN 'PARTIAL'
    ELSE 'PENDING' END,
