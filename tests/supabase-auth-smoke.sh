@@ -98,8 +98,8 @@ expect_rpc_denied() {
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     --data "${payload}")"
-  if [[ "${status}" =~ ^2 ]]; then
-    echo "Unexpectedly allowed ${label}" >&2
+  if [[ "${status}" != "400" && "${status}" != "403" ]]; then
+    echo "Expected an authorization rejection (HTTP 400/403) for ${label}, got HTTP ${status}" >&2
     cat /tmp/atack-rpc-error.json >&2
     exit 1
   fi
@@ -173,8 +173,8 @@ WRITE_STATUS="$(curl --silent --show-error -o /tmp/journal-write-response.json -
   -H "Content-Type: application/json" \
   -H "Prefer: return=minimal" \
   --data "$(jq -nc --arg store_id "${STORE_A}" '{store_id:$store_id}')")"
-if [[ "${WRITE_STATUS}" =~ ^2 ]]; then
-  echo "Unexpectedly allowed direct INSERT into journal_entries" >&2
+if [[ "${WRITE_STATUS}" != "403" ]] || [[ "$(jq -r '.code // empty' /tmp/journal-write-response.json)" != "42501" ]]; then
+  echo "Expected PostgreSQL privilege denial (HTTP 403 / SQLSTATE 42501) for direct journal INSERT, got HTTP ${WRITE_STATUS}" >&2
   cat /tmp/journal-write-response.json >&2
   exit 1
 fi
