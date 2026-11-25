@@ -399,3 +399,58 @@ BEGIN
  RAISE NOTICE 'PASS: rejected goods record, approved excess, approved substitute, and authorized partial closure';
 END
 $receiving_extensions_test$;
+
+-- D-055: amendments after partial receipt preserve received quantities and audit old/new values.
+DO $purchase_amendment_test$
+DECLARE
+ v_store UUID:='10000000-0000-4000-8000-000000000001';
+ v_auth UUID:='20000000-0000-4000-8000-000000000001';
+ v_supplier UUID:='40000000-0000-4000-8000-000000000001';
+ v_product UUID:='50000000-0000-4000-8000-000000000007';
+ v_purchase UUID:='70000000-0000-4000-8000-000000000007';
+ v_item UUID:='71000000-0000-4000-8000-000000000007';
+ v_result JSONB; v_before NUMERIC(18,4); v_after NUMERIC(18,4);
+ v_qty NUMERIC(18,4); v_received NUMERIC(18,4); v_total NUMERIC(18,4);
+BEGIN
+ PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
+ INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
+ VALUES(v_product,v_store,'Purchase Amendment Test','pcs',0,TRUE);
+ PERFORM public.process_purchase(v_store,'60000000-0000-4000-8000-000000000019',
+  jsonb_build_object('id',v_purchase,'purchase_number','PH2-PUR-AMEND','supplier_id',v_supplier,
+   'paid_amount',0,'items',jsonb_build_array(jsonb_build_object('id',v_item,'product_id',v_product,
+    'quantity',10,'received_quantity',4,'unit_id','pcs','unit_price',30,'cost_per_unit',30))));
+ SELECT current_debt INTO v_before FROM public.suppliers WHERE id=v_supplier;
+
+ v_result:=public.process_purchase_amendment(v_store,'60000000-0000-4000-8000-000000000020',
+  jsonb_build_object('id','75000000-0000-4000-8000-000000000007',
+   'purchase_id',v_purchase,'reason','Supplier price and quantity confirmed after partial delivery',
+   'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,
+    'quantity',12,'unit_price',32,'cost_per_unit',32))));
+ SELECT quantity,received_quantity INTO v_qty,v_received FROM public.purchase_items WHERE id=v_item;
+ SELECT total_amount INTO v_total FROM public.purchases WHERE id=v_purchase;
+ SELECT current_debt INTO v_after FROM public.suppliers WHERE id=v_supplier;
+ IF v_qty IS DISTINCT FROM 12 OR v_received IS DISTINCT FROM 4 OR v_total IS DISTINCT FROM 384
+    OR v_after-v_before IS DISTINCT FROM 384 THEN
+   RAISE EXCEPTION 'Purchase amendment mismatch: ordered %, received %, total %, debt delta %',
+    v_qty,v_received,v_total,v_after-v_before;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.purchase_amendments
+    WHERE id='75000000-0000-4000-8000-000000000007'
+      AND old_values_json->0->>'quantity'='10'
+      AND new_values_json->0->>'quantity'='12') THEN
+   RAISE EXCEPTION 'Purchase amendment old/new snapshots missing';
+ END IF;
+
+ BEGIN
+  PERFORM public.process_purchase_amendment(v_store,'60000000-0000-4000-8000-000000000021',
+   jsonb_build_object('id','75000000-0000-4000-8000-000000000008',
+    'purchase_id',v_purchase,'reason','Invalid reduction below received quantity',
+    'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3))));
+  RAISE EXCEPTION 'Amendment below received quantity unexpectedly succeeded';
+ EXCEPTION WHEN check_violation THEN NULL;
+ END;
+ SELECT quantity INTO v_qty FROM public.purchase_items WHERE id=v_item;
+ IF v_qty IS DISTINCT FROM 12 THEN RAISE EXCEPTION 'Rejected amendment changed ordered quantity'; END IF;
+ RAISE NOTICE 'PASS: post-receipt amendment, atomic financial adjustment, immutable receipt quantity, audit snapshots and reduction guard';
+END
+$purchase_amendment_test$;
