@@ -74,6 +74,10 @@ BEGIN
     );
   END LOOP;
 
+  -- A member may read only the store row resolved from their Auth identity.
+  -- The permissive store_self_access policy in Phase 1 supplies the RLS filter.
+  GRANT SELECT ON TABLE public.stores TO authenticated;
+
   -- Users can always read their own profile; listing other users requires users.manage.
   GRANT SELECT ON TABLE public.users TO authenticated;
   DROP POLICY IF EXISTS rbac_read_users ON public.users;
