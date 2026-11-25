@@ -91,6 +91,29 @@ BEGIN
     RAISE EXCEPTION 'Cross-store RLS leak: visible security accounts %',v_visible;
   END IF;
 
+  -- The authenticated identity must see exactly its own store and no users
+  -- belonging to the second store. The owner may list users in its own store.
+  SELECT count(*) INTO v_visible FROM public.stores;
+  IF v_visible<>1 OR NOT EXISTS (
+    SELECT 1 FROM public.stores
+     WHERE id='10000000-0000-4000-8000-000000000001'::uuid
+  ) THEN
+    RAISE EXCEPTION 'Stores RLS isolation failed: visible store count %',v_visible;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.users
+     WHERE store_id='10000000-0000-4000-8000-000000000002'::uuid
+  ) THEN
+    RAISE EXCEPTION 'Users RLS leaked a profile from another store';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.users
+     WHERE store_id='10000000-0000-4000-8000-000000000001'::uuid
+  ) THEN
+    RAISE EXCEPTION 'Authenticated owner cannot read users in its own store';
+  END IF;
+
   BEGIN
     INSERT INTO public.chart_of_accounts(store_id,account_code,account_name,account_type)
     VALUES(v_store,'SEC-DIRECT','Unauthorized direct write','ASSET');
