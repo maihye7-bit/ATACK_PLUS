@@ -177,7 +177,8 @@ BEGIN
         v_unit := v_item->>'unit_id';
         v_price := (v_item->>'unit_price')::NUMERIC;
         v_discount_line := COALESCE(NULLIF(v_item->>'discount_amount','')::NUMERIC,0);
-        v_tax_rate := COALESCE(NULLIF(v_item->>'tax_rate','')::NUMERIC,0);
+        -- D-029: TVA is deferred in v1. Keep tax columns, but never calculate tax.
+        v_tax_rate := 0;
         IF v_qty <= 0 OR v_price < 0 OR v_discount_line < 0 OR v_tax_rate NOT BETWEEN 0 AND 100 THEN
             RAISE EXCEPTION 'Invalid sale line quantity, price, discount or tax rate';
         END IF;
@@ -190,7 +191,7 @@ BEGIN
         IF v_factor IS NULL OR v_factor <= 0 THEN RAISE EXCEPTION 'Unit % is not configured for product %', v_unit, v_product; END IF;
         v_line_total := v_qty*v_price-v_discount_line;
         IF v_line_total < 0 THEN RAISE EXCEPTION 'Line discount exceeds line gross amount'; END IF;
-        v_tax_line := round(v_line_total*v_tax_rate/100,4);
+        v_tax_line := 0;
         v_subtotal := v_subtotal + v_qty*v_price;
         v_discount := v_discount + v_discount_line;
         v_tax := v_tax + v_tax_line;
@@ -211,13 +212,14 @@ BEGIN
         v_product := (v_item->>'product_id')::UUID; v_qty := (v_item->>'quantity')::NUMERIC;
         v_unit := v_item->>'unit_id'; v_price := (v_item->>'unit_price')::NUMERIC;
         v_discount_line := COALESCE(NULLIF(v_item->>'discount_amount','')::NUMERIC,0);
-        v_tax_rate := COALESCE(NULLIF(v_item->>'tax_rate','')::NUMERIC,0);
+        -- D-029: TVA is deferred in v1. Keep tax columns, but never calculate tax.
+        v_tax_rate := 0;
         SELECT CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END, p.cost_price, p.primary_unit_id
           INTO v_factor,v_cost,v_method FROM public.products p LEFT JOIN public.product_units pu
             ON pu.product_id=p.id AND pu.unit_id=v_unit WHERE p.id=v_product AND p.store_id=p_store_id;
         v_base_qty := v_qty*v_factor;
         v_line_total := v_qty*v_price-v_discount_line;
-        v_tax_line := round(v_line_total*v_tax_rate/100,4);
+        v_tax_line := 0;
         v_item_id := COALESCE(NULLIF(v_item->>'id','')::UUID,gen_random_uuid());
 
         INSERT INTO public.invoice_items(id,invoice_id,product_id,quantity,quantity_unit_id,unit_price,
@@ -290,6 +292,7 @@ DECLARE
     v_unit TEXT; v_price NUMERIC(18,4); v_cost NUMERIC(18,4); v_tax_rate NUMERIC(5,2);
     v_tax_line NUMERIC(18,4); v_line NUMERIC(18,4); v_factor NUMERIC(18,6);
     v_base NUMERIC(18,4); v_primary TEXT; v_stock UUID; v_payment UUID; v_method TEXT;
+    v_old_qty NUMERIC(18,4); v_old_cost NUMERIC(18,4); v_new_cost NUMERIC(18,4);
 BEGIN
     IF COALESCE(jsonb_typeof(p_payload->'items'),'')<>'array' THEN RAISE EXCEPTION 'Purchase items must be a JSON array'; END IF;
     IF jsonb_array_length(p_payload->'items')=0 THEN RAISE EXCEPTION 'Purchase must contain at least one item'; END IF;
@@ -303,14 +306,15 @@ BEGIN
         v_product:=(v_item->>'product_id')::UUID; v_qty:=(v_item->>'quantity')::NUMERIC;
         v_unit:=v_item->>'unit_id'; v_price:=(v_item->>'unit_price')::NUMERIC;
         v_cost:=COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC,v_price);
-        v_tax_rate:=COALESCE(NULLIF(v_item->>'tax_rate','')::NUMERIC,0);
+        -- D-029: TVA is deferred in v1; retain schema fields without automatic tax.
+        v_tax_rate:=0;
         IF v_qty<=0 OR v_price<0 OR v_cost<0 OR v_tax_rate NOT BETWEEN 0 AND 100 THEN RAISE EXCEPTION 'Invalid purchase line'; END IF;
         IF NOT EXISTS(SELECT 1 FROM public.products WHERE id=v_product AND store_id=p_store_id AND is_active AND deleted_at IS NULL) THEN RAISE EXCEPTION 'Product does not belong to this store or is inactive'; END IF;
         SELECT CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END INTO v_factor
           FROM public.products p LEFT JOIN public.product_units pu ON pu.product_id=p.id AND pu.unit_id=v_unit
          WHERE p.id=v_product AND p.store_id=p_store_id;
         IF v_factor IS NULL OR v_factor<=0 THEN RAISE EXCEPTION 'Unit % is not configured for product %',v_unit,v_product; END IF;
-        v_line:=v_qty*v_price; v_tax_line:=round(v_line*v_tax_rate/100,4);
+        v_line:=v_qty*v_price; v_tax_line:=0;
         v_sub:=v_sub+v_line; v_tax:=v_tax+v_tax_line;
     END LOOP;
     v_total:=v_sub+v_tax;
@@ -326,11 +330,18 @@ BEGIN
         v_product:=(v_item->>'product_id')::UUID; v_qty:=(v_item->>'quantity')::NUMERIC;
         v_unit:=v_item->>'unit_id'; v_price:=(v_item->>'unit_price')::NUMERIC;
         v_cost:=COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC,v_price);
-        v_tax_rate:=COALESCE(NULLIF(v_item->>'tax_rate','')::NUMERIC,0);
-        SELECT CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END,p.primary_unit_id
-          INTO v_factor,v_primary FROM public.products p LEFT JOIN public.product_units pu
-            ON pu.product_id=p.id AND pu.unit_id=v_unit WHERE p.id=v_product AND p.store_id=p_store_id;
-        v_base:=v_qty*v_factor; v_line:=v_qty*v_price; v_tax_line:=round(v_line*v_tax_rate/100,4);
+        -- D-029: TVA is deferred in v1; retain schema fields without automatic tax.
+        v_tax_rate:=0;
+        -- Serialize receipts per product, then lock its stock rows in a stable order.
+        -- This prevents concurrent purchases from overwriting the weighted average cost.
+        SELECT CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END,
+               p.primary_unit_id,p.cost_price
+          INTO v_factor,v_primary,v_old_cost
+          FROM public.products p
+          LEFT JOIN public.product_units pu ON pu.product_id=p.id AND pu.unit_id=v_unit
+         WHERE p.id=v_product AND p.store_id=p_store_id
+         FOR UPDATE OF p;
+        v_base:=v_qty*v_factor; v_line:=v_qty*v_price; v_tax_line:=0;
         INSERT INTO public.purchase_items(id,purchase_id,product_id,quantity,quantity_unit_id,unit_price,
             cost_per_unit,tax_rate,tax_amount,line_total,batch_number,expiry_date,received,received_date)
         VALUES(COALESCE(NULLIF(v_item->>'id','')::UUID,gen_random_uuid()),v_id,v_product,v_qty,v_unit,
@@ -338,13 +349,24 @@ BEGIN
             NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ,TRUE,NOW());
         INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
         VALUES(v_product,v_location,0,0) ON CONFLICT(product_id,location_id) DO NOTHING;
-        SELECT id INTO v_stock FROM public.stock WHERE product_id=v_product AND location_id=v_location FOR UPDATE;
+        PERFORM 1 FROM public.stock WHERE product_id=v_product ORDER BY location_id FOR UPDATE;
+        SELECT COALESCE(SUM(quantity),0) INTO v_old_qty
+          FROM public.stock WHERE product_id=v_product;
+        SELECT id INTO v_stock FROM public.stock
+         WHERE product_id=v_product AND location_id=v_location;
+        -- cost_price is stored per primary unit. Purchase line cost is converted
+        -- from the entered unit before computing the inventory weighted average.
+        v_new_cost := CASE
+          WHEN v_old_qty + v_base = 0 THEN v_cost/v_factor
+          WHEN v_old_qty = 0 THEN v_cost/v_factor
+          ELSE round(((v_old_qty*v_old_cost)+(v_qty*v_cost))/(v_old_qty+v_base),4)
+        END;
         UPDATE public.stock SET quantity=quantity+v_base WHERE id=v_stock;
         INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
             reference_id,reference_type,batch_number,expiry_date,reason,user_id)
         VALUES(v_product,v_location,'IN',v_base,v_primary,v_cost/v_factor,v_qty*v_cost,v_id,'purchase',
             v_item->>'batch_number',NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ,'Purchase '||v_number,v_user);
-        UPDATE public.products SET cost_price=v_cost/v_factor,updated_at=NOW() WHERE id=v_product;
+        UPDATE public.products SET cost_price=v_new_cost,updated_at=NOW() WHERE id=v_product;
     END LOOP;
 
     SELECT current_debt INTO v_debt FROM public.suppliers WHERE id=v_supplier FOR UPDATE;
