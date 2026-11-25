@@ -30,6 +30,7 @@ DECLARE
  v_unit TEXT; v_primary TEXT; v_factor NUMERIC(18,6);
  v_cost NUMERIC(18,4); v_price NUMERIC(18,4); v_line_qty NUMERIC(18,4); v_line_total NUMERIC(18,4);
  v_stock UUID; v_available NUMERIC(18,4); v_batch TEXT; v_expiry TIMESTAMPTZ;
+ v_old_qty NUMERIC(18,4); v_current_cost NUMERIC(18,4); v_new_cost NUMERIC(18,4);
 BEGIN
  IF v_location NOT IN ('main','warehouse','storage') THEN RAISE EXCEPTION 'Invalid stock location'; END IF;
  IF v_refund_method<>'CREDIT' THEN
@@ -92,18 +93,22 @@ BEGIN
    END IF;
 
    SELECT p.primary_unit_id,
-     CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END
-    INTO v_primary,v_factor FROM public.products p
+     CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END,
+     p.cost_price
+    INTO v_primary,v_factor,v_current_cost FROM public.products p
     LEFT JOIN public.product_units pu ON pu.product_id=p.id AND pu.unit_id=v_unit
-   WHERE p.id=v_product AND p.store_id=p_store_id AND p.is_active;
+   WHERE p.id=v_product AND p.store_id=p_store_id AND p.is_active
+   FOR UPDATE OF p;
    IF v_factor IS NULL OR v_factor<=0 THEN RAISE EXCEPTION 'Original receipt unit conversion is invalid'; END IF;
    v_line_qty:=v_qty*v_factor;
    v_line_total:=v_qty*v_price;
    v_batch:=COALESCE(NULLIF(v_row->>'batch_number',''),v_batch);
    v_expiry:=COALESCE(NULLIF(v_row->>'expiry_date','')::TIMESTAMPTZ,v_expiry);
 
+   PERFORM 1 FROM public.stock WHERE product_id=v_product ORDER BY location_id FOR UPDATE;
+   SELECT COALESCE(SUM(quantity),0) INTO v_old_qty FROM public.stock WHERE product_id=v_product;
    SELECT s.id,s.quantity-s.reserved_quantity INTO v_stock,v_available
-    FROM public.stock s WHERE s.product_id=v_product AND s.location_id=v_location FOR UPDATE;
+    FROM public.stock s WHERE s.product_id=v_product AND s.location_id=v_location;
    IF v_stock IS NULL OR v_available<v_line_qty THEN
      RAISE EXCEPTION 'Insufficient available stock in location % for purchase return',v_location USING ERRCODE='23514';
    END IF;
@@ -112,6 +117,9 @@ BEGIN
      batch_number,expiry_date,purchase_item_id,purchase_receipt_item_id)
    VALUES(v_return_id,v_product,v_qty,v_unit,v_price,v_line_total,v_batch,v_expiry,v_item,v_receipt_item);
    UPDATE public.stock SET quantity=quantity-v_line_qty WHERE id=v_stock;
+   v_new_cost:=CASE WHEN v_old_qty-v_line_qty<=0 THEN 0
+     ELSE GREATEST(round(((v_old_qty*v_current_cost)-(v_line_qty*(v_cost/v_factor)))/(v_old_qty-v_line_qty),4),0) END;
+   UPDATE public.products SET cost_price=v_new_cost,updated_at=NOW() WHERE id=v_product;
    INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
      reference_id,reference_type,batch_number,expiry_date,reason,user_id)
    VALUES(v_product,v_location,'RETURN_OUT',v_line_qty,v_primary,v_cost/v_factor,v_line_qty*(v_cost/v_factor),
