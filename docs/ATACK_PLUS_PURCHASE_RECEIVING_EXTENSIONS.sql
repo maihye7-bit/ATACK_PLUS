@@ -89,7 +89,7 @@ SELECT p.store_id,p.id,'INITIAL-'||p.purchase_number,gen_random_uuid(),p.created
 INSERT INTO public.purchase_receipt_items(store_id,receipt_id,purchase_item_id,original_product_id,actual_product_id,
   ordered_quantity,accepted_quantity,quantity_unit_id,unit_cost,unit_price,batch_number,expiry_date)
 SELECT p.store_id,pr.id,pi.id,pi.product_id,pi.product_id,pi.quantity,pi.received_quantity,
-  pi.quantity_unit_id,pi.cost_per_unit,pi.unit_price,pi.batch_number,pi.expiry_date,pi.batch_number,pi.expiry_date
+  pi.quantity_unit_id,pi.cost_per_unit,pi.unit_price,pi.batch_number,pi.expiry_date
  FROM public.purchase_items pi JOIN public.purchases p ON p.id=pi.purchase_id
  JOIN public.purchase_receipts pr ON pr.purchase_id=p.id AND pr.notes='Backfilled initial receipt from legacy purchase creation'
 WHERE pi.received_quantity>0
