@@ -192,9 +192,9 @@ rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"admin",p_action:"REVOKE"}')" >/dev/null
 
 echo "Verifying business RPC permission boundaries and a successful cashier sale..."
-SALE_PAYLOAD="$(jq -nc --arg id "${SALE_ID}" --arg item "${SALE_ITEM_ID}" --arg product "${PRODUCT_A}" \
+SALE_PAYLOAD="$(jq -nc --arg id "${SALE_ID}" --arg item "${SALE_ITEM_ID}" --arg product "${PRODUCT_A}" --arg customer "${CUSTOMER_A}" \
   --arg number "AUTH-RPC-${GITHUB_RUN_ID:-local}" \
-  '{id:$id,invoice_number:$number,paid_amount:5,payment_method:"CASH",items:[{id:$item,product_id:$product,quantity:1,unit_id:"pcs",unit_price:5,discount_amount:0}]}')"
+  '{id:$id,invoice_number:$number,customer_id:$customer,paid_amount:5,payment_method:"CASH",items:[{id:$item,product_id:$product,quantity:1,unit_id:"pcs",unit_price:5,discount_amount:0}]}')"
 SALE_ARGS="$(jq -nc --arg store "${STORE_A}" --arg op "${SALE_OPERATION}" --argjson payload "${SALE_PAYLOAD}" \
   '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
 SALE_RESULT="$(rpc_call "${CASHIER_TOKEN}" "process_sale_invoice" "${SALE_ARGS}")"
@@ -311,6 +311,7 @@ DECLARE
   v_returned NUMERIC(18,4);
   v_supplier_payments INTEGER;
   v_customer_debt NUMERIC(18,4);
+  v_customer_credit NUMERIC(18,4);
   v_supplier_debt NUMERIC(18,4);
   v_invoice_remaining NUMERIC(18,4);
   v_debit NUMERIC(18,4);
@@ -328,7 +329,10 @@ BEGIN
   IF v_supplier_payments<>1 THEN RAISE EXCEPTION 'Expected exactly one explicit supplier payment; purchase return must not create an automatic payout'; END IF;
   SELECT current_debt INTO v_supplier_debt FROM public.suppliers WHERE id=(SELECT supplier_id FROM public.purchases WHERE id=current_setting('atack.test.purchase_id')::uuid);
   IF v_supplier_debt<>22 THEN RAISE EXCEPTION 'Supplier debt after return, amendment, closure and payment mismatch: %',v_supplier_debt; END IF;
-  SELECT current_debt INTO v_customer_debt FROM public.customers WHERE id=current_setting('atack.test.customer_a')::uuid;
+  SELECT current_debt,credit_balance INTO v_customer_debt,v_customer_credit FROM public.customers WHERE id=current_setting('atack.test.customer_a')::uuid;
+  IF v_customer_credit<>5 OR (SELECT customer_credit_created FROM public.sales_returns WHERE id=current_setting('atack.test.sale_return_id')::uuid)<>5 THEN
+    RAISE EXCEPTION 'Paid sale return did not create the approved customer credit: balance %, return credit %',v_customer_credit,(SELECT customer_credit_created FROM public.sales_returns WHERE id=current_setting('atack.test.sale_return_id')::uuid);
+  END IF;
   SELECT remaining_amount INTO v_invoice_remaining FROM public.invoices WHERE id=current_setting('atack.test.customer_sale_id')::uuid;
   IF v_customer_debt<>5 OR v_invoice_remaining<>5 THEN RAISE EXCEPTION 'Customer payment allocation mismatch: debt %, invoice remaining %',v_customer_debt,v_invoice_remaining; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.purchase_amendments WHERE id=current_setting('atack.test.purchase_amendment_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid) THEN RAISE EXCEPTION 'Purchase amendment record missing'; END IF;
