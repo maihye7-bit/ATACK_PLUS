@@ -63,7 +63,7 @@ BEGIN
       JOIN pg_namespace n ON n.oid=p.pronamespace
       CROSS JOIN LATERAL regexp_matches(
         pg_get_functiondef(p.oid),
-        'has_store_permission\\s*\\([^,]+,\\s*''([^'']+)''',
+        'has_store_permission\s*\([^,]+,\s*''([^'']+)''',
         'g'
       ) AS m(matches)
      WHERE n.nspname='public'
