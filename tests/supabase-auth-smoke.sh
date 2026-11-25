@@ -123,7 +123,7 @@ PRODUCTS="$(curl --fail-with-body --silent --show-error \
   -H "apikey: ${ANON_KEY}" \
   -H "Authorization: Bearer ${ADMIN_TOKEN}")"
 ACTUAL_IDS="$(jq -r '.[].id' <<<"${PRODUCTS}" | sort)"
-EXPECTED_IDS="$(printf '%s\\n' "${PRODUCT_A}" | sort)"
+EXPECTED_IDS="$(printf '%s\n' "${PRODUCT_A}" | sort)"
 if [[ "${ACTUAL_IDS}" != "${EXPECTED_IDS}" ]]; then
   echo "Expected only store A product ${PRODUCT_A}, got: ${ACTUAL_IDS}" >&2
   exit 1
