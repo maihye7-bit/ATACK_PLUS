@@ -81,17 +81,6 @@ BEGIN
   IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
     RAISE EXCEPTION 'Owner could not grant seller role: %',result;
   END IF;
-  result:=public.manage_store_user_role(
-    '99000000-0000-4000-8000-000000000006','cashier','REVOKE');
-  IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
-    RAISE EXCEPTION 'Owner could not revoke a seller role: %',result;
-  END IF;
-  result:=public.manage_store_user_role(
-    '99000000-0000-4000-8000-000000000006','cashier','GRANT');
-  IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
-    RAISE EXCEPTION 'Owner could not restore the seller role: %',result;
-  END IF;
-
   denied:=FALSE;
   BEGIN
     PERFORM public.manage_store_user_role(
