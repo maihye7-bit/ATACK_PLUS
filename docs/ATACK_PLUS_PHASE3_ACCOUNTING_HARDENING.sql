@@ -799,6 +799,7 @@ HAVING COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
        COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)<>0
 ORDER BY coa.store_id,coa.account_code;
 
+REVOKE ALL ON public.v_trial_balance,public.v_balance_sheet,public.v_income_statement FROM PUBLIC,anon;
 GRANT SELECT ON public.v_trial_balance,public.v_balance_sheet,public.v_income_statement TO authenticated;
 REVOKE ALL ON FUNCTION public.process_sale_invoice(UUID,UUID,JSONB) FROM PUBLIC,anon;
 REVOKE ALL ON FUNCTION public.process_purchase(UUID,UUID,JSONB) FROM PUBLIC,anon;
