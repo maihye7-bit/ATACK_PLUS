@@ -48,10 +48,14 @@ CREATE TABLE IF NOT EXISTS public.purchase_receipt_items (
   packaging_condition TEXT,
   photo_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
   substitute_reason TEXT,
+  batch_number TEXT,
+  expiry_date TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_purchase_receipts_purchase ON public.purchase_receipts(purchase_id,received_at);
 CREATE INDEX IF NOT EXISTS idx_purchase_receipt_items_item ON public.purchase_receipt_items(purchase_item_id);
+ALTER TABLE public.purchase_receipt_items ADD COLUMN IF NOT EXISTS batch_number TEXT;
+ALTER TABLE public.purchase_receipt_items ADD COLUMN IF NOT EXISTS expiry_date TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_purchase_receipt_items_actual_product ON public.purchase_receipt_items(actual_product_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_receipt_item_per_line ON public.purchase_receipt_items(receipt_id,purchase_item_id);
 ALTER TABLE public.purchase_receipt_items DROP CONSTRAINT IF EXISTS purchase_receipt_items_photo_paths_array_check;
@@ -83,9 +87,9 @@ SELECT p.store_id,p.id,'INITIAL-'||p.purchase_number,gen_random_uuid(),p.created
  WHERE EXISTS(SELECT 1 FROM public.purchase_items pi WHERE pi.purchase_id=p.id AND pi.received_quantity>0)
    AND NOT EXISTS(SELECT 1 FROM public.purchase_receipts pr WHERE pr.purchase_id=p.id);
 INSERT INTO public.purchase_receipt_items(store_id,receipt_id,purchase_item_id,original_product_id,actual_product_id,
-  ordered_quantity,accepted_quantity,quantity_unit_id,unit_cost,unit_price)
+  ordered_quantity,accepted_quantity,quantity_unit_id,unit_cost,unit_price,batch_number,expiry_date)
 SELECT p.store_id,pr.id,pi.id,pi.product_id,pi.product_id,pi.quantity,pi.received_quantity,
-  pi.quantity_unit_id,pi.cost_per_unit,pi.unit_price
+  pi.quantity_unit_id,pi.cost_per_unit,pi.unit_price,pi.batch_number,pi.expiry_date,pi.batch_number,pi.expiry_date
  FROM public.purchase_items pi JOIN public.purchases p ON p.id=pi.purchase_id
  JOIN public.purchase_receipts pr ON pr.purchase_id=p.id AND pr.notes='Backfilled initial receipt from legacy purchase creation'
 WHERE pi.received_quantity>0
@@ -160,9 +164,9 @@ BEGIN
    VALUES(p_store_id,v_purchase,'INITIAL-'||v_number,p_operation_id,v_user,'Initial receipt during purchase creation')
    RETURNING id INTO v_receipt;
    INSERT INTO public.purchase_receipt_items(store_id,receipt_id,purchase_item_id,original_product_id,actual_product_id,
-     ordered_quantity,accepted_quantity,quantity_unit_id,unit_cost,unit_price)
+     ordered_quantity,accepted_quantity,quantity_unit_id,unit_cost,unit_price,batch_number,expiry_date)
    SELECT p_store_id,v_receipt,pi.id,pi.product_id,pi.product_id,pi.quantity,pi.received_quantity,
-     pi.quantity_unit_id,pi.cost_per_unit,pi.unit_price
+     pi.quantity_unit_id,pi.cost_per_unit,pi.unit_price,pi.batch_number,pi.expiry_date
     FROM public.purchase_items pi WHERE pi.purchase_id=v_purchase AND pi.received_quantity>0;
  END IF;
  RETURN v_result;
@@ -254,10 +258,12 @@ BEGIN
 
    INSERT INTO public.purchase_receipt_items(store_id,receipt_id,purchase_item_id,original_product_id,actual_product_id,
      ordered_quantity,accepted_quantity,excess_quantity,rejected_quantity,quantity_unit_id,unit_cost,unit_price,
-     excess_reason,rejection_reason,packaging_condition,photo_paths,substitute_reason)
+     excess_reason,rejection_reason,packaging_condition,photo_paths,substitute_reason,batch_number,expiry_date)
    VALUES(p_store_id,v_receipt,v_item,v_product,v_actual,v_ordered,v_qty,v_excess,v_rejected,v_unit,
      v_actual_cost,v_actual_price,NULLIF(v_row->>'excess_reason',''),v_reason,
-     NULLIF(v_row->>'packaging_condition',''),COALESCE(v_row->'photo_paths','[]'::jsonb),v_sub_reason);
+     NULLIF(v_row->>'packaging_condition',''),COALESCE(v_row->'photo_paths','[]'::jsonb),v_sub_reason,
+     COALESCE(NULLIF(v_row->>'batch_number',''),v_batch),
+     COALESCE(NULLIF(v_row->>'expiry_date','')::TIMESTAMPTZ,v_expiry));
 
    IF v_qty+v_excess>0 THEN
      v_base:=(v_qty+v_excess)*v_factor;
