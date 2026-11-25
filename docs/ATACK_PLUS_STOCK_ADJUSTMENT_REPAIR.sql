@@ -94,11 +94,14 @@ BEGIN
    v_new_qty:=v_current_qty+v_base_qty;
  ELSE
    v_new_qty:=v_current_qty-v_base_qty;
-   IF v_new_qty<v_reserved THEN
-     RAISE EXCEPTION 'Cannot adjust stock using reserved quantity' USING ERRCODE='23514';
-   END IF;
+   -- A privileged negative-stock adjustment may cross zero only when no
+   -- reserved quantity exists. Check the special permission before the
+   -- ordinary reserved-stock guard so callers receive the correct denial.
    IF v_new_qty<0 AND NOT public.has_store_permission(p_store_id,'inventory.allow_negative') THEN
      RAISE EXCEPTION 'Negative stock requires inventory.allow_negative' USING ERRCODE='42501';
+   END IF;
+   IF v_new_qty<v_reserved AND NOT (v_new_qty<0 AND v_reserved=0) THEN
+     RAISE EXCEPTION 'Cannot adjust stock using reserved quantity' USING ERRCODE='23514';
    END IF;
  END IF;
 
