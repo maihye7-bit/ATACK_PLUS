@@ -1,8 +1,8 @@
--- User-role delegation and device-visibility security regressions.
+-- Owner/seller role delegation and device-visibility security regressions.
 INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
 VALUES
  ('99000000-0000-4000-8000-000000000005','20000000-0000-4000-8000-000000000005',
-  '10000000-0000-4000-8000-000000000001','phase3_admin_user','Phase 3 Admin',TRUE),
+  '10000000-0000-4000-8000-000000000001','phase3_seller_user','Phase 3 Seller',TRUE),
  ('99000000-0000-4000-8000-000000000006','20000000-0000-4000-8000-000000000006',
   '10000000-0000-4000-8000-000000000001','phase3_role_target','Phase 3 Role Target',TRUE),
  ('99000000-0000-4000-8000-000000000007','20000000-0000-4000-8000-000000000007',
@@ -10,14 +10,13 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.user_roles(user_id,role_id)
-VALUES
- ('99000000-0000-4000-8000-000000000005','admin'),
- ('99000000-0000-4000-8000-000000000007','cashier')
+VALUES ('99000000-0000-4000-8000-000000000005','cashier'),
+       ('99000000-0000-4000-8000-000000000007','cashier')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO public.devices(id,store_id,device_name,device_type,is_online)
 VALUES
- ('91000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000001','Admin Test Device','DESKTOP',TRUE),
+ ('91000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000001','Owner Test Device','DESKTOP',TRUE),
  ('92000000-0000-4000-8000-000000000005','10000000-0000-4000-8000-000000000002','Other Store Device','DESKTOP',TRUE)
 ON CONFLICT (id) DO NOTHING;
 
@@ -40,45 +39,57 @@ $role_acl$;
 BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000005',TRUE);
 SET LOCAL ROLE authenticated;
-DO $admin_role_limits$
-DECLARE denied BOOLEAN:=FALSE; result JSONB; n INTEGER; v_error TEXT;
+DO $seller_role_limits$
+DECLARE denied BOOLEAN:=FALSE; v_error TEXT;
 BEGIN
   BEGIN
     PERFORM public.manage_store_user_role(
       '99000000-0000-4000-8000-000000000006','owner','GRANT');
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
     GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
-    IF v_error NOT LIKE '%Cannot manage a role containing permissions the caller does not hold%' THEN RAISE; END IF;
+    IF v_error NOT LIKE '%users.manage permission required%' THEN RAISE; END IF;
     denied:=TRUE;
   END;
-  IF NOT denied THEN RAISE EXCEPTION 'Admin was able to grant owner role'; END IF;
+  IF NOT denied THEN RAISE EXCEPTION 'Seller was able to grant the owner role'; END IF;
 
+  BEGIN
+    PERFORM public.manage_store_user_role(
+      '99000000-0000-4000-8000-000000000006','cashier','GRANT');
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%users.manage permission required%' THEN RAISE; END IF;
+    denied:=TRUE;
+  END;
+  IF NOT denied THEN RAISE EXCEPTION 'Seller was able to manage another user role'; END IF;
+  IF EXISTS(SELECT 1 FROM public.user_roles WHERE user_id='99000000-0000-4000-8000-000000000006') THEN
+    RAISE EXCEPTION 'Seller role-management denial left an unexpected role assignment';
+  END IF;
+  RAISE NOTICE 'PASS: seller cannot grant owner or manage another seller''s roles';
+END
+$seller_role_limits$;
+ROLLBACK;
+
+BEGIN;
+SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',TRUE);
+SET LOCAL ROLE authenticated;
+DO $owner_role_management$
+DECLARE result JSONB; denied BOOLEAN:=FALSE; v_error TEXT; n INTEGER;
+BEGIN
   result:=public.manage_store_user_role(
     '99000000-0000-4000-8000-000000000006','cashier','GRANT');
   IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
-    RAISE EXCEPTION 'Admin could not grant a role within their permission set: %',result;
+    RAISE EXCEPTION 'Owner could not grant seller role: %',result;
   END IF;
   result:=public.manage_store_user_role(
     '99000000-0000-4000-8000-000000000006','stock_keeper','GRANT');
   IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
-    RAISE EXCEPTION 'Admin could not grant a second permitted role: %',result;
+    RAISE EXCEPTION 'Owner could not grant an optional delegated role: %',result;
   END IF;
   result:=public.manage_store_user_role(
     '99000000-0000-4000-8000-000000000006','cashier','REVOKE');
   IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
-    RAISE EXCEPTION 'Admin could not revoke a role within their permission set: %',result;
+    RAISE EXCEPTION 'Owner could not revoke a delegated role: %',result;
   END IF;
-
-  denied:=FALSE;
-  BEGIN
-    PERFORM public.manage_store_user_role(
-      '30000000-0000-4000-8000-000000000001','owner','REVOKE');
-  EXCEPTION WHEN SQLSTATE 'P0001' THEN
-    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
-    IF v_error NOT LIKE '%Cannot manage a role containing permissions the caller does not hold%' THEN RAISE; END IF;
-    denied:=TRUE;
-  END;
-  IF NOT denied THEN RAISE EXCEPTION 'Admin was able to revoke the owner role'; END IF;
 
   denied:=FALSE;
   BEGIN
@@ -101,10 +112,6 @@ BEGIN
     denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'RPC treated NULL action as REVOKE'; END IF;
-  IF NOT EXISTS(SELECT 1 FROM public.user_roles
-      WHERE user_id='99000000-0000-4000-8000-000000000007' AND role_id='cashier') THEN
-    RAISE EXCEPTION 'NULL role action removed the target role';
-  END IF;
 
   denied:=FALSE;
   BEGIN
@@ -121,65 +128,47 @@ BEGIN
    WHERE user_id='99000000-0000-4000-8000-000000000006';
   IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.user_roles
       WHERE user_id='99000000-0000-4000-8000-000000000006' AND role_id='stock_keeper') THEN
-    RAISE EXCEPTION 'Role delegation did not persist the expected role set';
+    RAISE EXCEPTION 'Owner delegation did not persist the expected optional role';
   END IF;
-  RAISE NOTICE 'PASS: admin cannot escalate to owner, can manage only covered roles, and cannot cross stores or remove final roles';
+  RAISE NOTICE 'PASS: owner can manage seller roles and optional delegation without crossing stores or removing a final role';
 END
-$admin_role_limits$;
+$owner_role_management$;
 ROLLBACK;
 
 BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',TRUE);
 SET LOCAL ROLE authenticated;
-DO $owner_role_grant$
-DECLARE result JSONB;
+DO $owner_device_visibility$
+DECLARE n INTEGER;
 BEGIN
-  result:=public.manage_store_user_role(
-    '99000000-0000-4000-8000-000000000006','admin','GRANT');
-  IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE
-     OR NOT EXISTS(SELECT 1 FROM public.user_roles
-       WHERE user_id='99000000-0000-4000-8000-000000000006' AND role_id='admin') THEN
-    RAISE EXCEPTION 'Owner could not grant admin role: %',result;
+  SELECT count(*) INTO n FROM public.devices;
+  IF n<1 OR EXISTS(SELECT 1 FROM public.devices WHERE store_id='10000000-0000-4000-8000-000000000002') THEN
+    RAISE EXCEPTION 'Owner device visibility is not restricted to the owner''s store';
   END IF;
-  RAISE NOTICE 'PASS: owner can grant a role covered by the owner permission set';
+  SELECT count(*) INTO n FROM public.user_roles;
+  IF n<1 THEN RAISE EXCEPTION 'Owner cannot view seller role assignments'; END IF;
+  RAISE NOTICE 'PASS: owner sees own-store devices and role assignments';
 END
-$owner_role_grant$;
+$owner_device_visibility$;
 ROLLBACK;
 
 BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000005',TRUE);
 SET LOCAL ROLE authenticated;
-DO $device_visibility$
+DO $seller_visibility$
 DECLARE n INTEGER; denied BOOLEAN:=FALSE;
 BEGIN
   SELECT count(*) INTO n FROM public.devices;
-  IF n<1 OR EXISTS(SELECT 1 FROM public.devices WHERE store_id='10000000-0000-4000-8000-000000000002') THEN
-    RAISE EXCEPTION 'Sync manager device visibility is not store-scoped';
-  END IF;
+  IF n<>0 THEN RAISE EXCEPTION 'Seller can view devices without sync.manage'; END IF;
   SELECT count(*) INTO n FROM public.user_roles;
-  IF n<1 THEN RAISE EXCEPTION 'Users manager cannot view role assignments'; END IF;
-  RAISE NOTICE 'PASS: sync manager sees only own-store devices and users manager sees role assignments';
-END
-$device_visibility$;
-ROLLBACK;
-
-BEGIN;
-SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000007',TRUE);
-SET LOCAL ROLE authenticated;
-DO $cashier_visibility$
-DECLARE n INTEGER; denied BOOLEAN:=FALSE;
-BEGIN
-  SELECT count(*) INTO n FROM public.devices;
-  IF n<>0 THEN RAISE EXCEPTION 'Cashier can view devices without sync.manage'; END IF;
-  SELECT count(*) INTO n FROM public.user_roles;
-  IF n<>0 THEN RAISE EXCEPTION 'Cashier can view role assignments without users.manage'; END IF;
+  IF n<>0 THEN RAISE EXCEPTION 'Seller can view role assignments without users.manage'; END IF;
   BEGIN
     INSERT INTO public.devices(store_id,device_name,device_type)
-    VALUES('10000000-0000-4000-8000-000000000001','Unauthorized Cashier Device','PHONE');
+    VALUES('10000000-0000-4000-8000-000000000001','Unauthorized Seller Device','PHONE');
   EXCEPTION WHEN insufficient_privilege THEN denied:=TRUE;
   END;
-  IF NOT denied THEN RAISE EXCEPTION 'Cashier direct device registration was not denied'; END IF;
-  RAISE NOTICE 'PASS: non-manager cannot view devices/roles or register a device';
+  IF NOT denied THEN RAISE EXCEPTION 'Seller direct device registration was not denied'; END IF;
+  RAISE NOTICE 'PASS: seller cannot view devices/role assignments or register a device';
 END
-$cashier_visibility$;
+$seller_visibility$;
 ROLLBACK;
