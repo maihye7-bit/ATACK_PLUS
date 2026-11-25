@@ -109,8 +109,21 @@ rpc_call() {
   local token="$1"
   local function_name="$2"
   local payload="$3"
-  local response status body
-  response="$(curl --silent --show-error -w 
+  local status body
+  status="$(curl --silent --show-error -o /tmp/atack-rpc-response.json -w '%{http_code}' \
+    -X POST "${API_URL}/rest/v1/rpc/${function_name}" \
+    -H "apikey: ${ANON_KEY}" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    --data "${payload}")"
+  body="$(cat /tmp/atack-rpc-response.json)"
+  if [[ ! "${status}" =~ ^2 ]]; then
+    echo "RPC ${function_name} failed with HTTP ${status}: ${body}" >&2
+    return 1
+  fi
+  printf '%s' "${body}"
+}
+
 echo "Verifying JWT-backed store isolation through PostgREST..."
 PRODUCTS="$(curl --fail-with-body --silent --show-error \
   "${API_URL}/rest/v1/products?select=id&order=id.asc" \
