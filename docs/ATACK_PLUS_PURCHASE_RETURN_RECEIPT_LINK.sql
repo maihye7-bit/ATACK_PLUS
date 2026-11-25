@@ -71,6 +71,9 @@ BEGIN
        SELECT pi.id INTO v_item FROM public.purchase_items pi
         WHERE pi.purchase_id=v_purchase_id AND pi.product_id=(v_row->>'product_id')::UUID
           AND (NULLIF(v_row->>'unit_id','') IS NULL OR pi.quantity_unit_id=v_row->>'unit_id')
+          AND pi.received_quantity+pi.excess_received_quantity-
+            COALESCE((SELECT SUM(pri.quantity) FROM public.purchase_return_items pri
+                       WHERE pri.purchase_item_id=pi.id),0)>=v_qty
         ORDER BY pi.id LIMIT 1 FOR UPDATE;
      END IF;
      SELECT pi.product_id,pi.received_quantity+pi.excess_received_quantity,pi.quantity_unit_id,
