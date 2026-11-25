@@ -83,10 +83,10 @@ BEGIN
      WHERE n.nspname='public' AND p.prosecdef
        AND has_function_privilege('authenticated',p.oid,'EXECUTE')
   LOOP
-    IF r.body NOT ILIKE '%auth.uid()%'
-       AND r.body NOT ILIKE '%has_store_permission%'
-       AND r.body NOT ILIKE '%current_user_store_id()%'
-       AND r.body NOT ILIKE '%_claim_business_operation%' THEN
+    IF position('auth.uid()' IN r.body)=0
+       AND position('has_store_permission' IN r.body)=0
+       AND position('current_user_store_id()' IN r.body)=0
+       AND position('_claim_business_operation' IN r.body)=0 THEN
       RAISE EXCEPTION 'Authenticated can execute SECURITY DEFINER RPC without an identity/store/RBAC guard: %.%(%)',
         'public',r.proname,r.args;
     END IF;
