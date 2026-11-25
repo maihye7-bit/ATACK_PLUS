@@ -841,7 +841,7 @@ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, extensions, public, pg_temp
 AS $$
 BEGIN
-    IF NOT public.has_store_permission(p_store_id, 'reports.view') THEN
+    IF NOT public.has_store_permission(p_store_id, 'reports.inventory') THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
 
@@ -874,7 +874,7 @@ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, extensions, public, pg_temp
 AS $$
 BEGIN
-    IF NOT public.has_store_permission(p_store_id, 'reports.view') THEN
+    IF NOT public.has_store_permission(p_store_id, 'reports.inventory') THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
 
