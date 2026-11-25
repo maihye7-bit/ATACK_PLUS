@@ -293,7 +293,7 @@ BEGIN
       RAISE EXCEPTION 'Over-return unexpectedly succeeded';
     EXCEPTION WHEN SQLSTATE '23514' THEN
       GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
-      IF v_error NOT LIKE '%Return quantity exceeds unreturned original sale quantity%' THEN RAISE; END IF;
+      IF v_error NOT LIKE '%Return quantity exceeds sold quantity for invoice item%' THEN RAISE; END IF;
     END;
 
     -- Purchase return is limited to quantities received on the exact purchase line.
