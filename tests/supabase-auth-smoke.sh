@@ -227,6 +227,13 @@ SALE_RETURN_RESULT="$(rpc_call "$CASHIER_TOKEN" "process_sale_return" "$SALE_RET
 expect_rpc_denied "purchase creation for another store" "$ADMIN_TOKEN" "process_purchase" "$(jq -nc --arg op "b6000000-0000-4000-8000-000000000015" --argjson payload "$PURCHASE_PAYLOAD" '{p_store_id:"b1000000-0000-4000-8000-000000000002",p_operation_id:$op,p_payload:$payload}')"
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v store_a="$STORE_A" -v product_a="$PRODUCT_A" -v purchase_id="$PURCHASE_ID" -v purchase_item_id="$PURCHASE_ITEM_ID" -v purchase_return_id="$PURCHASE_RETURN_ID" -v adjustment_id="$ADJUSTMENT_ID" -v sale_return_id="$SALE_RETURN_ID" <<'SQL'
+SELECT set_config('atack.test.store_a', :'store_a', false);
+SELECT set_config('atack.test.product_a', :'product_a', false);
+SELECT set_config('atack.test.purchase_id', :'purchase_id', false);
+SELECT set_config('atack.test.purchase_item_id', :'purchase_item_id', false);
+SELECT set_config('atack.test.purchase_return_id', :'purchase_return_id', false);
+SELECT set_config('atack.test.adjustment_id', :'adjustment_id', false);
+SELECT set_config('atack.test.sale_return_id', :'sale_return_id', false);
 DO $assert_business$
 DECLARE
   v_stock NUMERIC(18,4);
@@ -236,17 +243,17 @@ DECLARE
   v_debit NUMERIC(18,4);
   v_credit NUMERIC(18,4);
 BEGIN
-  SELECT quantity INTO v_stock FROM public.stock WHERE product_id=:'product_a'::uuid AND location_id='main';
-  SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=:'purchase_item_id'::uuid AND purchase_id=:'purchase_id'::uuid;
-  SELECT total_amount INTO v_returned FROM public.purchase_returns WHERE id=:'purchase_return_id'::uuid AND store_id=:'store_a'::uuid;
+  SELECT quantity INTO v_stock FROM public.stock WHERE product_id=current_setting('atack.test.product_a')::uuid AND location_id='main';
+  SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=current_setting('atack.test.purchase_item_id')::uuid AND purchase_id=current_setting('atack.test.purchase_id')::uuid;
+  SELECT total_amount INTO v_returned FROM public.purchase_returns WHERE id=current_setting('atack.test.purchase_return_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid;
   IF v_received<>3 THEN RAISE EXCEPTION 'Partial receipt quantity mismatch: %',v_received; END IF;
   IF v_returned<>12 THEN RAISE EXCEPTION 'Purchase return amount mismatch: %',v_returned; END IF;
-  IF NOT EXISTS(SELECT 1 FROM public.stock_adjustments WHERE id=:'adjustment_id'::uuid AND store_id=:'store_a'::uuid) THEN RAISE EXCEPTION 'Stock adjustment record missing'; END IF;
-  IF NOT EXISTS(SELECT 1 FROM public.sales_returns WHERE id=:'sale_return_id'::uuid AND store_id=:'store_a'::uuid) THEN RAISE EXCEPTION 'Sale return record missing'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.stock_adjustments WHERE id=current_setting('atack.test.adjustment_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid) THEN RAISE EXCEPTION 'Stock adjustment record missing'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.sales_returns WHERE id=current_setting('atack.test.sale_return_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid) THEN RAISE EXCEPTION 'Sale return record missing'; END IF;
   IF v_stock<>13 THEN RAISE EXCEPTION 'Unexpected final stock after sale, receipt, returns and adjustment: %',v_stock; END IF;
-  SELECT count(*) INTO v_supplier_payments FROM public.supplier_payments WHERE supplier_id=(SELECT supplier_id FROM public.purchases WHERE id=:'purchase_id'::uuid);
+  SELECT count(*) INTO v_supplier_payments FROM public.supplier_payments WHERE supplier_id=(SELECT supplier_id FROM public.purchases WHERE id=current_setting('atack.test.purchase_id')::uuid);
   IF v_supplier_payments<>0 THEN RAISE EXCEPTION 'Purchase return unexpectedly created supplier cash/bank payment'; END IF;
-  SELECT COALESCE(SUM(total_debit),0),COALESCE(SUM(total_credit),0) INTO v_debit,v_credit FROM public.v_trial_balance WHERE store_id=:'store_a'::uuid;
+  SELECT COALESCE(SUM(total_debit),0),COALESCE(SUM(total_credit),0) INTO v_debit,v_credit FROM public.v_trial_balance WHERE store_id=current_setting('atack.test.store_a')::uuid;
   IF round(v_debit,4)<>round(v_credit,4) THEN RAISE EXCEPTION 'Trial balance unbalanced after RPC operations: debit %, credit %',v_debit,v_credit; END IF;
 END
 $assert_business$;
