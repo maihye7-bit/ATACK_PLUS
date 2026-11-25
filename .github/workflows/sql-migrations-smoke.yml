@@ -160,6 +160,14 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-security-catalog-regression.sql"
+      - name: Apply Phase 3 RBAC read hardening
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE3_RBAC_READ_HARDENING.sql"
+      - name: Run Phase 3 RBAC read regression tests
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-rbac-read-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
