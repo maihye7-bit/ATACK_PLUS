@@ -108,6 +108,7 @@ DECLARE
     v_received NUMERIC(18,4);
     v_status TEXT;
     v_cost NUMERIC(18,4);
+    v_error TEXT;
 BEGIN
     PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
     INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
@@ -187,8 +188,9 @@ BEGIN
           'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',4)))
       );
       RAISE EXCEPTION 'Over-receipt unexpectedly succeeded';
-    EXCEPTION WHEN check_violation THEN
-      NULL;
+    EXCEPTION WHEN SQLSTATE '23514' THEN
+      GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+      IF v_error NOT LIKE '%Accepted quantity exceeds outstanding ordered quantity%' THEN RAISE; END IF;
     END;
 
     PERFORM public.process_purchase_receipt(
@@ -228,6 +230,7 @@ DECLARE
     v_cost NUMERIC(18,4);
     v_payments_before INTEGER;
     v_payments_after INTEGER;
+    v_error TEXT;
 BEGIN
     PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
 
@@ -288,7 +291,9 @@ BEGIN
             'product_id',v_sale_product,'quantity',1,'unit_id','pcs')))
       );
       RAISE EXCEPTION 'Over-return unexpectedly succeeded';
-    EXCEPTION WHEN check_violation THEN NULL;
+    EXCEPTION WHEN SQLSTATE '23514' THEN
+      GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+      IF v_error NOT LIKE '%Return quantity exceeds unreturned original sale quantity%' THEN RAISE; END IF;
     END;
 
     -- Purchase return is limited to quantities received on the exact purchase line.
@@ -326,7 +331,9 @@ BEGIN
             'quantity',9,'unit_id','pcs')))
       );
       RAISE EXCEPTION 'Purchase over-return unexpectedly succeeded';
-    EXCEPTION WHEN check_violation THEN NULL;
+    EXCEPTION WHEN SQLSTATE '23514' THEN
+      GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+      IF v_error NOT LIKE '%Purchase return exceeds accepted received quantity%' THEN RAISE; END IF;
     END;
 
     RAISE NOTICE 'PASS: sale return source-line cap, original price, customer credit, no cash payout, purchase received-quantity cap and supplier ledger';
@@ -450,6 +457,7 @@ DECLARE
  v_item UUID:='71000000-0000-4000-8000-000000000007';
  v_result JSONB; v_before NUMERIC(18,4); v_after NUMERIC(18,4);
  v_qty NUMERIC(18,4); v_received NUMERIC(18,4); v_total NUMERIC(18,4); v_product_cost NUMERIC(18,4);
+ v_error TEXT;
 BEGIN
  PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
  INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
@@ -495,7 +503,9 @@ BEGIN
     'purchase_id',v_purchase,'reason','Invalid reduction below received quantity',
     'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3))));
   RAISE EXCEPTION 'Amendment below received quantity unexpectedly succeeded';
- EXCEPTION WHEN check_violation THEN NULL;
+ EXCEPTION WHEN SQLSTATE '23514' THEN
+  GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+  IF v_error NOT LIKE '%Amended ordered quantity cannot be below received, returned and closed quantity%' THEN RAISE; END IF;
  END;
  SELECT quantity INTO v_qty FROM public.purchase_items WHERE id=v_item;
  IF v_qty IS DISTINCT FROM 12 THEN RAISE EXCEPTION 'Rejected amendment changed ordered quantity'; END IF;
