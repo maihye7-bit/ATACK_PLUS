@@ -297,6 +297,7 @@ DECLARE
     v_factor NUMERIC(18,6);
     v_unit TEXT;
     v_available_qty NUMERIC(18,4);
+    v_payment_id UUID;
 BEGIN
     -- Authentication and authorization
     SELECT u.id INTO v_user FROM public.users u
@@ -437,12 +438,13 @@ BEGIN
         ) SELECT
             gen_random_uuid(), p.supplier_id, v_total, v_refund_method, p_payload->>'reference_no',
             'Refund for purchase return ' || v_return_number, v_created_by
-        FROM purchases p WHERE p.id = v_purchase_id AND p.store_id = p_store_id;
+        FROM purchases p WHERE p.id = v_purchase_id AND p.store_id = p_store_id
+        RETURNING id INTO v_payment_id;
 
         INSERT INTO supplier_ledger(
             supplier_id, type, amount, balance, reference_id, description, created_by
         ) SELECT
-            p.supplier_id, 'PAYMENT', -v_total, s.current_debt - v_total, gen_last_oid(),
+            p.supplier_id, 'PAYMENT', -v_total, s.current_debt - v_total, v_payment_id,
             'Refund for purchase return ' || v_return_number, v_created_by
         FROM purchases p JOIN suppliers s ON s.id = p.supplier_id
         WHERE p.id = v_purchase_id AND p.store_id = p_store_id;
