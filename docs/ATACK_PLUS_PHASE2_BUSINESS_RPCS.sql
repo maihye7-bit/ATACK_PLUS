@@ -420,7 +420,7 @@ CREATE OR REPLACE FUNCTION public.process_purchase_receipt(
     p_store_id UUID,p_operation_id UUID,p_payload JSONB
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,extensions,public,pg_temp
-AS $
+AS $purchase_receipt$
 DECLARE
     v_user UUID; v_replay BOOLEAN; v_receipt_id UUID := (p_payload->>'id')::UUID;
     v_purchase_id UUID := (p_payload->>'purchase_id')::UUID;
@@ -489,7 +489,7 @@ BEGIN
     RETURN jsonb_build_object('success',TRUE,'replayed',FALSE,'receipt_id',v_receipt_id,
       'purchase_id',v_purchase_id,'received_base_quantity',v_received_total);
 END;
-$;
+$purchase_receipt$;
 
 REVOKE ALL ON FUNCTION public.process_purchase_receipt(UUID,UUID,JSONB) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.process_purchase_receipt(UUID,UUID,JSONB) TO authenticated;
