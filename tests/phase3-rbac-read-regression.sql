@@ -80,87 +80,72 @@ BEGIN
 END
 $rbac_read_catalog$;
 
+
 BEGIN;
+-- The operational model is one store owner/superadmin plus individual sellers.
+-- The current database role key 'cashier' supplies the seller's sales permissions;
+-- it does not imply a separate cashier job in the business model.
 INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
 VALUES
  ('99100000-0000-4000-8000-000000000001','20100000-0000-4000-8000-000000000001',
-  '10000000-0000-4000-8000-000000000001','rbac_read_cashier','RBAC Read Cashier',TRUE),
+  '10000000-0000-4000-8000-000000000001','rbac_read_seller','RBAC Read Seller',TRUE),
  ('99100000-0000-4000-8000-000000000002','20100000-0000-4000-8000-000000000002',
-  '10000000-0000-4000-8000-000000000001','rbac_read_stockkeeper','RBAC Read Stock Keeper',TRUE),
- ('99100000-0000-4000-8000-000000000003','20100000-0000-4000-8000-000000000003',
-  '10000000-0000-4000-8000-000000000001','rbac_read_accountant','RBAC Read Accountant',TRUE)
+  '10000000-0000-4000-8000-000000000001','rbac_read_owner','RBAC Read Owner',TRUE)
 ON CONFLICT(id) DO NOTHING;
 INSERT INTO public.user_roles(user_id,role_id)
 VALUES
  ('99100000-0000-4000-8000-000000000001','cashier'),
- ('99100000-0000-4000-8000-000000000002','stock_keeper'),
- ('99100000-0000-4000-8000-000000000003','accountant')
+ ('99100000-0000-4000-8000-000000000002','owner')
 ON CONFLICT(user_id,role_id) DO NOTHING;
 
 SELECT set_config('request.jwt.claim.sub','20100000-0000-4000-8000-000000000001',TRUE);
 SET LOCAL ROLE authenticated;
-DO $cashier_reads$
+DO $seller_reads$
 DECLARE n INTEGER;
 BEGIN
   SELECT count(*) INTO n FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000001';
-  IF n<>1 THEN RAISE EXCEPTION 'Cashier cannot read permitted sales invoice'; END IF;
-  IF EXISTS(SELECT 1 FROM public.purchases) THEN RAISE EXCEPTION 'Cashier can read purchases without purchases.read'; END IF;
-  IF NOT EXISTS(SELECT 1 FROM public.stock WHERE product_id='50000000-0000-4000-8000-000000000001') THEN RAISE EXCEPTION 'Cashier cannot read inventory despite inventory.read'; END IF;
-  IF EXISTS(SELECT 1 FROM public.journal_entries) THEN RAISE EXCEPTION 'Cashier can read financial journals without reports.financial'; END IF;
+  IF n<>1 THEN RAISE EXCEPTION 'Seller cannot read permitted sales invoice'; END IF;
+  IF EXISTS(SELECT 1 FROM public.purchases) THEN RAISE EXCEPTION 'Seller can read purchases without delegated purchase permissions'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.stock WHERE product_id='50000000-0000-4000-8000-000000000001') THEN RAISE EXCEPTION 'Seller cannot read inventory needed for sales'; END IF;
+  IF EXISTS(SELECT 1 FROM public.journal_entries) THEN RAISE EXCEPTION 'Seller can read owner-only financial journals'; END IF;
   SELECT count(*) INTO n FROM public.users WHERE id='99100000-0000-4000-8000-000000000001';
-  IF n<>1 OR EXISTS(SELECT 1 FROM public.users WHERE id='30000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Cashier own-profile read boundary is incorrect';
+  IF n<>1 OR EXISTS(SELECT 1 FROM public.users WHERE id='99100000-0000-4000-8000-000000000002')
+     OR EXISTS(SELECT 1 FROM public.users WHERE id='30000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Seller profile visibility is not restricted to the caller''s own profile';
   END IF;
   PERFORM * FROM public.check_low_stock('10000000-0000-4000-8000-000000000001');
   PERFORM * FROM public.check_inventory_expiry('10000000-0000-4000-8000-000000000001');
-  RAISE NOTICE 'PASS: cashier sees sales and own profile only; inventory reports use reports.inventory';
+  RAISE NOTICE 'PASS: seller sees sales, required product/stock data and own profile, but not purchasing or owner accounting';
 END
-$cashier_reads$;
+$seller_reads$;
 RESET ROLE;
 
 SELECT set_config('request.jwt.claim.sub','20100000-0000-4000-8000-000000000002',TRUE);
 SET LOCAL ROLE authenticated;
-DO $stockkeeper_reads$
+DO $owner_reads$
 DECLARE n INTEGER;
 BEGIN
-  IF NOT EXISTS(SELECT 1 FROM public.products WHERE id='50000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Stock keeper cannot read permitted products';
+  IF NOT EXISTS(SELECT 1 FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Owner cannot read store sales';
   END IF;
   IF NOT EXISTS(SELECT 1 FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Stock keeper cannot read permitted purchases';
+    RAISE EXCEPTION 'Owner cannot read store purchases';
   END IF;
   IF NOT EXISTS(SELECT 1 FROM public.stock WHERE product_id='50000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Stock keeper cannot read permitted inventory';
+    RAISE EXCEPTION 'Owner cannot read store inventory';
   END IF;
-  IF EXISTS(SELECT 1 FROM public.invoices) THEN
-    RAISE EXCEPTION 'Stock keeper can read sales without sales.read';
+  IF NOT EXISTS(SELECT 1 FROM public.chart_of_accounts WHERE store_id='10000000-0000-4000-8000-000000000001')
+     OR NOT EXISTS(SELECT 1 FROM public.general_ledger WHERE store_id='10000000-0000-4000-8000-000000000001')
+     OR NOT EXISTS(SELECT 1 FROM public.journal_entries WHERE store_id='10000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Owner cannot read complete store accounting records';
   END IF;
-  IF EXISTS(SELECT 1 FROM public.journal_entries) THEN
-    RAISE EXCEPTION 'Stock keeper can read financial journals without reports.financial';
+  SELECT count(*) INTO n FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000001';
+  IF n<2 THEN RAISE EXCEPTION 'Owner cannot see store users including sellers'; END IF;
+  IF EXISTS(SELECT 1 FROM public.users WHERE store_id<>'10000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Owner read another store''s user profiles';
   END IF;
-  RAISE NOTICE 'PASS: stock keeper sees products, purchases and inventory but not sales or financial journals';
+  RAISE NOTICE 'PASS: owner sees all own-store sales, purchases, inventory, accounting and seller profiles with cross-store isolation';
 END
-$stockkeeper_reads$;
-RESET ROLE;
-
-SELECT set_config('request.jwt.claim.sub','20100000-0000-4000-8000-000000000003',TRUE);
-SET LOCAL ROLE authenticated;
-DO $accountant_reads$
-BEGIN
-  IF NOT EXISTS(SELECT 1 FROM public.chart_of_accounts WHERE store_id='10000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Accountant cannot read permitted chart of accounts';
-  END IF;
-  IF NOT EXISTS(SELECT 1 FROM public.general_ledger WHERE store_id='10000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Accountant cannot read permitted general ledger';
-  END IF;
-  IF EXISTS(SELECT 1 FROM public.stock) THEN
-    RAISE EXCEPTION 'Accountant can read stock without inventory.read';
-  END IF;
-  IF EXISTS(SELECT 1 FROM public.chart_of_accounts WHERE account_code='SEC-B') THEN
-    RAISE EXCEPTION 'Accountant read policy leaked another store chart';
-  END IF;
-  RAISE NOTICE 'PASS: accountant sees financial records only within own store and not inventory';
-END
-$accountant_reads$;
+$owner_reads$;
 RESET ROLE;
 ROLLBACK;
