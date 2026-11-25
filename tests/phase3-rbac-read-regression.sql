@@ -85,7 +85,7 @@ BEGIN
   SELECT count(*) INTO n FROM public.invoices WHERE id='80000000-0000-4000-8000-000000000001';
   IF n<>1 THEN RAISE EXCEPTION 'Cashier cannot read permitted sales invoice'; END IF;
   IF EXISTS(SELECT 1 FROM public.purchases) THEN RAISE EXCEPTION 'Cashier can read purchases without purchases.read'; END IF;
-  IF EXISTS(SELECT 1 FROM public.stock) THEN RAISE EXCEPTION 'Cashier can read stock without inventory.read'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.stock WHERE product_id='50000000-0000-4000-8000-000000000001') THEN RAISE EXCEPTION 'Cashier cannot read inventory despite inventory.read'; END IF;
   IF EXISTS(SELECT 1 FROM public.journal_entries) THEN RAISE EXCEPTION 'Cashier can read financial journals without reports.financial'; END IF;
   SELECT count(*) INTO n FROM public.users WHERE id='99100000-0000-4000-8000-000000000001';
   IF n<>1 OR EXISTS(SELECT 1 FROM public.users WHERE id='30000000-0000-4000-8000-000000000001') THEN
