@@ -5,7 +5,6 @@ BEGIN;
 
 -- D-016: permit negative quantity only through the privileged RPC.
 ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_quantity_check;
-ALTER TABLE public.stock ADD CONSTRAINT stock_quantity_check CHECK (quantity>=0 OR quantity<0);
 ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_reserved_quantity_check;
 ALTER TABLE public.stock ADD CONSTRAINT stock_reserved_quantity_check
  CHECK(reserved_quantity>=0 AND reserved_quantity<=GREATEST(quantity,0));
