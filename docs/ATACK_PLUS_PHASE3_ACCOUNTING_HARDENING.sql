@@ -768,10 +768,8 @@ WITH account_balances AS (
         COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)<>0
 ), current_earnings AS (
  SELECT coa.store_id,
-  -(
-    COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
-    COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)
-   ) AS balance
+  COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
+  COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0) AS balance
  FROM public.chart_of_accounts coa
  LEFT JOIN public.general_ledger gl ON gl.account_id=coa.id AND gl.store_id=coa.store_id
  WHERE coa.is_active AND coa.account_type IN ('REVENUE','EXPENSE','COST_OF_GOODS_SOLD','INCOME')
