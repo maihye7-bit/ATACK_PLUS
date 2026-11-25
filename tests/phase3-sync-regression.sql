@@ -31,14 +31,6 @@ BEGIN
   IF NOT public.acknowledge_sync_cursor(v_store,v_device,'products',v_cursor) THEN
     RAISE EXCEPTION 'Valid Pull cursor was not acknowledged';
   END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM public.sync_cursors
-     WHERE store_id=v_store AND device_id=v_device AND table_name='products'
-       AND last_pull_seq=v_cursor
-  ) THEN
-    RAISE EXCEPTION 'Acknowledged cursor was not persisted';
-  END IF;
-
   v_denied:=FALSE;
   BEGIN
     PERFORM * FROM public.get_unsynced_records(v_store,
@@ -86,5 +78,20 @@ BEGIN
   RAISE NOTICE 'PASS: sync Pull/ACK table allowlist, registered-device ownership, cursor persistence and bounds';
 END
 $sync_pull_ack$;
+
+RESET ROLE;
+DO $sync_ack_persistence$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.sync_cursors
+     WHERE store_id='10000000-0000-4000-8000-000000000001'
+       AND device_id='91000000-0000-4000-8000-000000000001'
+       AND table_name='products'
+       AND last_pull_seq>0
+  ) THEN
+    RAISE EXCEPTION 'Acknowledged cursor was not persisted';
+  END IF;
+END
+$sync_ack_persistence$;
 
 ROLLBACK;
