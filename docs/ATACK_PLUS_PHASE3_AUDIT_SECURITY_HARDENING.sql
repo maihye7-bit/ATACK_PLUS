@@ -51,6 +51,11 @@ CREATE TRIGGER trg_audit_logs_immutable_update_delete
 BEFORE UPDATE OR DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION public.reject_audit_log_mutation();
 
+DROP TRIGGER IF EXISTS trg_audit_logs_immutable_truncate ON public.audit_logs;
+CREATE TRIGGER trg_audit_logs_immutable_truncate
+BEFORE TRUNCATE ON public.audit_logs
+FOR EACH STATEMENT EXECUTE FUNCTION public.reject_audit_log_mutation();
+
 REVOKE ALL ON FUNCTION public.reject_audit_log_mutation() FROM PUBLIC,anon,authenticated,service_role;
 
 -- Synchronization activity log: readable only by sync managers; never directly writable.
