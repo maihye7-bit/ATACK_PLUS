@@ -8,6 +8,32 @@
 -- تفعيل الإضافات المطلوبة
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Resolve pgcrypto across Supabase (extensions schema) and vanilla PostgreSQL
+-- (public schema) without depending on a caller's search_path.
+CREATE OR REPLACE FUNCTION public.atack_digest(p_data BYTEA,p_algorithm TEXT)
+RETURNS BYTEA
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path=pg_catalog,public,pg_temp
+AS $atack_digest$
+DECLARE
+    v_result BYTEA;
+BEGIN
+    IF to_regprocedure('extensions.digest(bytea,text)') IS NOT NULL THEN
+        EXECUTE 'SELECT extensions.digest($1,$2)' INTO v_result
+          USING p_data,p_algorithm;
+    ELSIF to_regprocedure('public.digest(bytea,text)') IS NOT NULL THEN
+        EXECUTE 'SELECT public.digest($1,$2)' INTO v_result
+          USING p_data,p_algorithm;
+    ELSE
+        RAISE EXCEPTION 'pgcrypto digest(bytea,text) is not installed';
+    END IF;
+    RETURN v_result;
+END;
+$atack_digest$;
+REVOKE ALL ON FUNCTION public.atack_digest(BYTEA,TEXT)
+  FROM PUBLIC,anon,authenticated;
+
 
 -- ============================================================
 -- 1. stores (المتاجر)
@@ -1290,7 +1316,7 @@ DECLARE
     v_outbox_id UUID;
     v_payload_hash TEXT;
 BEGIN
-    v_payload_hash := encode(digest(p_record_json::text, 'sha256'), 'hex');
+    v_payload_hash := encode(public.atack_digest(convert_to(p_record_json::text,'UTF8'), 'sha256'), 'hex');
 
     INSERT INTO sync_outbox
         (store_id, device_id, table_name, operation, record_uuid, idempotency_key, record_json, payload_hash)
@@ -2107,7 +2133,7 @@ BEGIN
         RETURN;
     END IF;
 
-    v_payload_hash := encode(digest(p_record_json::text, 'sha256'), 'hex');
+    v_payload_hash := encode(public.atack_digest(convert_to(p_record_json::text,'UTF8'), 'sha256'), 'hex');
 
     SELECT * INTO v_result
       FROM atomic_process_operation(
