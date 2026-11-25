@@ -26,11 +26,23 @@ PURCHASE_RETURN_ID="a6000000-0000-4000-8000-000000000006"
 PURCHASE_RETURN_OPERATION="a6000000-0000-4000-8000-000000000007"
 ADJUSTMENT_ID="a6000000-0000-4000-8000-000000000008"
 ADJUSTMENT_OPERATION="a6000000-0000-4000-8000-000000000009"
+PURCHASE_AMENDMENT_ID="a6000000-0000-4000-8000-000000000020"
+PURCHASE_AMENDMENT_OPERATION="a6000000-0000-4000-8000-000000000021"
+PURCHASE_CLOSURE_ID="a6000000-0000-4000-8000-000000000022"
+PURCHASE_CLOSURE_OPERATION="a6000000-0000-4000-8000-000000000023"
+SUPPLIER_PAYMENT_ID="a6000000-0000-4000-8000-000000000024"
+SUPPLIER_PAYMENT_OPERATION="a6000000-0000-4000-8000-000000000025"
 SALE_RETURN_ID="a6000000-0000-4000-8000-000000000010"
 SALE_RETURN_OPERATION="a6000000-0000-4000-8000-000000000011"
 SALE_ID="a5000000-0000-4000-8000-000000000001"
 SALE_ITEM_ID="a5000000-0000-4000-8000-000000000002"
 SALE_OPERATION="a5000000-0000-4000-8000-000000000003"
+CUSTOMER_A="a4000000-0000-4000-8000-000000000002"
+CUSTOMER_SALE_ID="a5000000-0000-4000-8000-000000000004"
+CUSTOMER_SALE_ITEM_ID="a5000000-0000-4000-8000-000000000005"
+CUSTOMER_SALE_OPERATION="a5000000-0000-4000-8000-000000000006"
+CUSTOMER_PAYMENT_ID="a5000000-0000-4000-8000-000000000007"
+CUSTOMER_PAYMENT_OPERATION="a5000000-0000-4000-8000-000000000008"
 
 signup_identity() {
   local label="$1"
@@ -63,7 +75,8 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v stock_auth_id="$STOCK_AUTH_ID" -v stock_user="$STOCK_USER" \
   -v store_a="$STORE_A" -v store_b="$STORE_B" \
   -v product_a="$PRODUCT_A" -v product_b="$PRODUCT_B" \
-  -v store_b_user="$STORE_B_USER" -v supplier_a="$SUPPLIER_A" <<'SQL'
+  -v store_b_user="$STORE_B_USER" -v supplier_a="$SUPPLIER_A" \
+  -v customer_a="$CUSTOMER_A" <<'SQL'
 INSERT INTO public.stores(id,name) VALUES
   (:'store_a'::uuid,'Auth smoke store A'),
   (:'store_b'::uuid,'Auth smoke store B');
@@ -87,6 +100,9 @@ VALUES
 INSERT INTO public.suppliers(id,store_id,code,name,is_active)
 VALUES (:'supplier_a'::uuid, :'store_a'::uuid, 'AUTH-SUP-001', 'Auth RPC Supplier', TRUE);
 
+INSERT INTO public.customers(id,store_id,code,name,current_debt,credit_balance,is_active)
+VALUES (:'customer_a'::uuid, :'store_a'::uuid, 'AUTH-CUST-001', 'Auth RPC Customer', 0, 0, TRUE);
+
 INSERT INTO public.products(store_id,id,name,primary_unit_id,cost_price,default_sale_price)
 VALUES
   (:'store_a'::uuid,:'product_a'::uuid,'Visible product','pcs',2,5),
@@ -101,23 +117,29 @@ SQL
 echo "Waiting for PostgREST schema cache..."
 sleep 3
 
-expect_rpc_denied() {
+expect_rpc_error() {
   local label="$1"
   local token="$2"
   local function_name="$3"
   local payload="$4"
-  local status
+  local expected_code="$5"
+  local status actual_code
   status="$(curl --silent --show-error -o /tmp/atack-rpc-error.json -w '%{http_code}' \
     -X POST "${API_URL}/rest/v1/rpc/${function_name}" \
     -H "apikey: ${ANON_KEY}" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     --data "${payload}")"
-  if [[ "${status}" != "400" && "${status}" != "403" ]]; then
-    echo "Expected an authorization rejection (HTTP 400/403) for ${label}, got HTTP ${status}" >&2
+  actual_code="$(jq -r '.code // empty' /tmp/atack-rpc-error.json)"
+  if [[ "${status}" != "400" && "${status}" != "403" ]] || [[ "${actual_code}" != "${expected_code}" ]]; then
+    echo "Expected SQLSTATE ${expected_code} for ${label}, got HTTP ${status} / SQLSTATE ${actual_code}" >&2
     cat /tmp/atack-rpc-error.json >&2
     exit 1
   fi
+}
+
+expect_rpc_denied() {
+  expect_rpc_error "$1" "$2" "$3" "$4" "42501"
 }
 
 rpc_call() {
@@ -152,17 +174,17 @@ if [[ "${ACTUAL_IDS}" != "${EXPECTED_IDS}" ]]; then
 fi
 
 echo "Verifying RPC role boundaries with real Auth JWTs..."
-expect_rpc_denied "admin granting owner role" "${ADMIN_TOKEN}" "manage_store_user_role" \
+expect_rpc_error "admin granting owner role" "${ADMIN_TOKEN}" "manage_store_user_role" \ "P0001"
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"owner",p_action:"GRANT"}')"
 rpc_call "${ADMIN_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"GRANT"}')" >/dev/null
 rpc_call "${ADMIN_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"stock_keeper",p_action:"REVOKE"}')" >/dev/null
-expect_rpc_denied "cashier managing user roles" "${CASHIER_TOKEN}" "manage_store_user_role" \
+expect_rpc_error "cashier managing user roles" "${CASHIER_TOKEN}" "manage_store_user_role" \ "P0001"
   "$(jq -nc --arg user "${STOCK_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')"
-expect_rpc_denied "admin managing a user from another store" "${ADMIN_TOKEN}" "manage_store_user_role" \
+expect_rpc_error "admin managing a user from another store" "${ADMIN_TOKEN}" "manage_store_user_role" \ "P0001"
   "$(jq -nc --arg user "${STORE_B_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:"GRANT"}')"
-expect_rpc_denied "NULL role-management action" "${ADMIN_TOKEN}" "manage_store_user_role" \
+expect_rpc_error "NULL role-management action" "${ADMIN_TOKEN}" "manage_store_user_role" \ "P0001"
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"cashier",p_action:null}')"
 rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"admin",p_action:"GRANT"}')" >/dev/null
@@ -204,7 +226,7 @@ REPLAY_RESULT="$(rpc_call "$STOCK_TOKEN" "process_purchase_receipt" "$RECEIPT_AR
 
 OVER_RECEIPT_PAYLOAD="$(jq -nc --arg id "a6000000-0000-4000-8000-000000000012" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" '{id:$id,purchase_id:$purchase,items:[{purchase_item_id:$item,accepted_quantity:2}]}')"
 OVER_RECEIPT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "a6000000-0000-4000-8000-000000000013" --argjson payload "$OVER_RECEIPT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
-expect_rpc_denied "receipt beyond outstanding quantity" "$STOCK_TOKEN" "process_purchase_receipt" "$OVER_RECEIPT_ARGS"
+expect_rpc_error "receipt beyond outstanding quantity" "$STOCK_TOKEN" "process_purchase_receipt" "$OVER_RECEIPT_ARGS" "23514"
 
 PURCHASE_RETURN_PAYLOAD="$(jq -nc --arg id "$PURCHASE_RETURN_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" --arg product "$PRODUCT_A" '{id:$id,purchase_id:$purchase,return_number:"AUTH-PRET-001",refund_method:"CREDIT",items:[{purchase_item_id:$item,product_id:$product,quantity:1,unit_id:"pcs"}]}')"
 PURCHASE_RETURN_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_RETURN_OPERATION" --argjson payload "$PURCHASE_RETURN_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
@@ -226,7 +248,49 @@ SALE_RETURN_RESULT="$(rpc_call "$CASHIER_TOKEN" "process_sale_return" "$SALE_RET
 
 expect_rpc_denied "purchase creation for another store" "$ADMIN_TOKEN" "process_purchase" "$(jq -nc --arg op "b6000000-0000-4000-8000-000000000015" --argjson payload "$PURCHASE_PAYLOAD" '{p_store_id:"b1000000-0000-4000-8000-000000000002",p_operation_id:$op,p_payload:$payload}')"
 
-psql "$DB_URL" -v ON_ERROR_STOP=1 -v store_a="$STORE_A" -v product_a="$PRODUCT_A" -v purchase_id="$PURCHASE_ID" -v purchase_item_id="$PURCHASE_ITEM_ID" -v purchase_return_id="$PURCHASE_RETURN_ID" -v adjustment_id="$ADJUSTMENT_ID" -v sale_return_id="$SALE_RETURN_ID" <<'SQL'
+echo "Verifying D-054/D-055 amendment and closure RPCs with real JWTs..."
+INVALID_AMENDMENT_PAYLOAD="$(jq -nc --arg id "$PURCHASE_AMENDMENT_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" '{id:$id,purchase_id:$purchase,reason:"Attempt to reduce below received plus returned quantity",items:[{purchase_item_id:$item,quantity:3,unit_price:12,cost_per_unit:12}]}')"
+INVALID_AMENDMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "a6000000-0000-4000-8000-000000000026" --argjson payload "$INVALID_AMENDMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+expect_rpc_error "amendment below received plus returned quantity" "$OWNER_TOKEN" "process_purchase_amendment" "$INVALID_AMENDMENT_ARGS" "23514"
+
+AMENDMENT_PAYLOAD="$(jq -nc --arg id "$PURCHASE_AMENDMENT_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" '{id:$id,purchase_id:$purchase,reason:"Approved post-receipt price and quantity amendment",items:[{purchase_item_id:$item,quantity:5,unit_price:13,cost_per_unit:13}]}')"
+AMENDMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_AMENDMENT_OPERATION" --argjson payload "$AMENDMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+expect_rpc_denied "cashier amending a received purchase" "$CASHIER_TOKEN" "process_purchase_amendment" "$AMENDMENT_ARGS"
+AMENDMENT_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase_amendment" "$AMENDMENT_ARGS")"
+[[ "$(jq -r '.success' <<<"$AMENDMENT_RESULT")" == "true" ]] || { echo "Purchase amendment failed: $AMENDMENT_RESULT" >&2; exit 1; }
+
+CLOSURE_PAYLOAD="$(jq -nc --arg id "$PURCHASE_CLOSURE_ID" --arg purchase "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" '{id:$id,purchase_id:$purchase,reason:"Supplier confirmed remaining quantity cannot be delivered",items:[{purchase_item_id:$item,quantity:2,reason:"Supplier out of stock"}]}')"
+CLOSURE_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_CLOSURE_OPERATION" --argjson payload "$CLOSURE_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+expect_rpc_denied "cashier closing unreceived purchase quantity" "$CASHIER_TOKEN" "process_purchase_close_remaining" "$CLOSURE_ARGS"
+STOCK_BEFORE_CLOSURE="$(psql "$DB_URL" -Atqc "SELECT quantity FROM public.stock WHERE product_id='${PRODUCT_A}'::uuid AND location_id='main'")"
+CLOSURE_RESULT="$(rpc_call "$OWNER_TOKEN" "process_purchase_close_remaining" "$CLOSURE_ARGS")"
+[[ "$(jq -r '.success' <<<"$CLOSURE_RESULT")" == "true" ]] || { echo "Purchase closure failed: $CLOSURE_RESULT" >&2; exit 1; }
+STOCK_AFTER_CLOSURE="$(psql "$DB_URL" -Atqc "SELECT quantity FROM public.stock WHERE product_id='${PRODUCT_A}'::uuid AND location_id='main'")"
+[[ "$STOCK_BEFORE_CLOSURE" == "$STOCK_AFTER_CLOSURE" ]] || { echo "Closing unreceived purchase quantity changed stock: before=$STOCK_BEFORE_CLOSURE after=$STOCK_AFTER_CLOSURE" >&2; exit 1; }
+
+echo "Verifying customer and supplier payment RPCs and accounting journals..."
+CUSTOMER_SALE_PAYLOAD="$(jq -nc --arg id "$CUSTOMER_SALE_ID" --arg item "$CUSTOMER_SALE_ITEM_ID" --arg product "$PRODUCT_A" --arg customer "$CUSTOMER_A" --arg number "AUTH-CUST-SALE-$GITHUB_RUN_ID" '{id:$id,invoice_number:$number,customer_id:$customer,paid_amount:0,payment_method:"CASH",items:[{id:$item,product_id:$product,quantity:1,unit_id:"pcs",unit_price:8,discount_amount:0}]}')"
+CUSTOMER_SALE_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$CUSTOMER_SALE_OPERATION" --argjson payload "$CUSTOMER_SALE_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+CUSTOMER_SALE_RESULT="$(rpc_call "$CASHIER_TOKEN" "process_sale_invoice" "$CUSTOMER_SALE_ARGS")"
+[[ "$(jq -r '.success' <<<"$CUSTOMER_SALE_RESULT")" == "true" ]] || { echo "Unpaid customer sale failed: $CUSTOMER_SALE_RESULT" >&2; exit 1; }
+
+CUSTOMER_PAYMENT_PAYLOAD="$(jq -nc --arg id "$CUSTOMER_PAYMENT_ID" --arg customer "$CUSTOMER_A" '{id:$id,customer_id:$customer,amount:3,payment_method:"CARD"}')"
+CUSTOMER_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$CUSTOMER_PAYMENT_OPERATION" --argjson payload "$CUSTOMER_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+expect_rpc_denied "stock keeper receiving customer payment" "$STOCK_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS"
+CUSTOMER_PAYMENT_RESULT="$(rpc_call "$CASHIER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
+[[ "$(jq -r '.success' <<<"$CUSTOMER_PAYMENT_RESULT")" == "true" ]] || { echo "Customer payment failed: $CUSTOMER_PAYMENT_RESULT" >&2; exit 1; }
+CUSTOMER_PAYMENT_REPLAY="$(rpc_call "$CASHIER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
+[[ "$(jq -r '.replayed' <<<"$CUSTOMER_PAYMENT_REPLAY")" == "true" ]] || { echo "Customer payment replay was not idempotent: $CUSTOMER_PAYMENT_REPLAY" >&2; exit 1; }
+
+SUPPLIER_PAYMENT_PAYLOAD="$(jq -nc --arg id "$SUPPLIER_PAYMENT_ID" --arg supplier "$SUPPLIER_A" '{id:$id,supplier_id:$supplier,amount:5,payment_method:"BANK_TRANSFER"}')"
+SUPPLIER_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SUPPLIER_PAYMENT_OPERATION" --argjson payload "$SUPPLIER_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+expect_rpc_denied "cashier paying a supplier" "$CASHIER_TOKEN" "process_supplier_payment" "$SUPPLIER_PAYMENT_ARGS"
+SUPPLIER_PAYMENT_RESULT="$(rpc_call "$ADMIN_TOKEN" "process_supplier_payment" "$SUPPLIER_PAYMENT_ARGS")"
+[[ "$(jq -r '.success' <<<"$SUPPLIER_PAYMENT_RESULT")" == "true" ]] || { echo "Supplier payment failed: $SUPPLIER_PAYMENT_RESULT" >&2; exit 1; }
+SUPPLIER_PAYMENT_REPLAY="$(rpc_call "$ADMIN_TOKEN" "process_supplier_payment" "$SUPPLIER_PAYMENT_ARGS")"
+[[ "$(jq -r '.replayed' <<<"$SUPPLIER_PAYMENT_REPLAY")" == "true" ]] || { echo "Supplier payment replay was not idempotent: $SUPPLIER_PAYMENT_REPLAY" >&2; exit 1; }
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v store_a="$STORE_A" -v product_a="$PRODUCT_A" -v purchase_id="$PURCHASE_ID" -v purchase_item_id="$PURCHASE_ITEM_ID" -v purchase_return_id="$PURCHASE_RETURN_ID" -v adjustment_id="$ADJUSTMENT_ID" -v sale_return_id="$SALE_RETURN_ID" -v purchase_amendment_id="$PURCHASE_AMENDMENT_ID" -v purchase_closure_id="$PURCHASE_CLOSURE_ID" -v customer_a="$CUSTOMER_A" -v customer_sale_id="$CUSTOMER_SALE_ID" -v customer_payment_id="$CUSTOMER_PAYMENT_ID" -v supplier_payment_id="$SUPPLIER_PAYMENT_ID" <<'SQL'
 SELECT set_config('atack.test.store_a', :'store_a', false);
 SELECT set_config('atack.test.product_a', :'product_a', false);
 SELECT set_config('atack.test.purchase_id', :'purchase_id', false);
@@ -234,12 +298,21 @@ SELECT set_config('atack.test.purchase_item_id', :'purchase_item_id', false);
 SELECT set_config('atack.test.purchase_return_id', :'purchase_return_id', false);
 SELECT set_config('atack.test.adjustment_id', :'adjustment_id', false);
 SELECT set_config('atack.test.sale_return_id', :'sale_return_id', false);
+SELECT set_config('atack.test.purchase_amendment_id', :'purchase_amendment_id', false);
+SELECT set_config('atack.test.purchase_closure_id', :'purchase_closure_id', false);
+SELECT set_config('atack.test.customer_a', :'customer_a', false);
+SELECT set_config('atack.test.customer_sale_id', :'customer_sale_id', false);
+SELECT set_config('atack.test.customer_payment_id', :'customer_payment_id', false);
+SELECT set_config('atack.test.supplier_payment_id', :'supplier_payment_id', false);
 DO $assert_business$
 DECLARE
   v_stock NUMERIC(18,4);
   v_received NUMERIC(18,4);
   v_returned NUMERIC(18,4);
   v_supplier_payments INTEGER;
+  v_customer_debt NUMERIC(18,4);
+  v_supplier_debt NUMERIC(18,4);
+  v_invoice_remaining NUMERIC(18,4);
   v_debit NUMERIC(18,4);
   v_credit NUMERIC(18,4);
 BEGIN
@@ -250,9 +323,24 @@ BEGIN
   IF v_returned<>12 THEN RAISE EXCEPTION 'Purchase return amount mismatch: %',v_returned; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.stock_adjustments WHERE id=current_setting('atack.test.adjustment_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid) THEN RAISE EXCEPTION 'Stock adjustment record missing'; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.sales_returns WHERE id=current_setting('atack.test.sale_return_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid) THEN RAISE EXCEPTION 'Sale return record missing'; END IF;
-  IF v_stock<>13 THEN RAISE EXCEPTION 'Unexpected final stock after sale, receipt, returns and adjustment: %',v_stock; END IF;
+  IF v_stock<>12 THEN RAISE EXCEPTION 'Unexpected final stock after sale, receipt, returns and adjustment: %',v_stock; END IF;
   SELECT count(*) INTO v_supplier_payments FROM public.supplier_payments WHERE supplier_id=(SELECT supplier_id FROM public.purchases WHERE id=current_setting('atack.test.purchase_id')::uuid);
-  IF v_supplier_payments<>0 THEN RAISE EXCEPTION 'Purchase return unexpectedly created supplier cash/bank payment'; END IF;
+  IF v_supplier_payments<>1 THEN RAISE EXCEPTION 'Expected exactly one explicit supplier payment; purchase return must not create an automatic payout'; END IF;
+  SELECT current_debt INTO v_supplier_debt FROM public.suppliers WHERE id=(SELECT supplier_id FROM public.purchases WHERE id=current_setting('atack.test.purchase_id')::uuid);
+  IF v_supplier_debt<>22 THEN RAISE EXCEPTION 'Supplier debt after return, amendment, closure and payment mismatch: %',v_supplier_debt; END IF;
+  SELECT current_debt INTO v_customer_debt FROM public.customers WHERE id=current_setting('atack.test.customer_a')::uuid;
+  SELECT remaining_amount INTO v_invoice_remaining FROM public.invoices WHERE id=current_setting('atack.test.customer_sale_id')::uuid;
+  IF v_customer_debt<>5 OR v_invoice_remaining<>5 THEN RAISE EXCEPTION 'Customer payment allocation mismatch: debt %, invoice remaining %',v_customer_debt,v_invoice_remaining; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.purchase_amendments WHERE id=current_setting('atack.test.purchase_amendment_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid) THEN RAISE EXCEPTION 'Purchase amendment record missing'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.purchase_closures WHERE id=current_setting('atack.test.purchase_closure_id')::uuid AND store_id=current_setting('atack.test.store_a')::uuid) THEN RAISE EXCEPTION 'Purchase closure record missing'; END IF;
+  IF (SELECT closed_quantity FROM public.purchase_items WHERE id=current_setting('atack.test.purchase_item_id')::uuid)<>2
+     OR (SELECT receiving_status FROM public.purchases WHERE id=current_setting('atack.test.purchase_id')::uuid)<>'CLOSED_PARTIAL' THEN
+    RAISE EXCEPTION 'Purchase close-remaining status/quantity mismatch';
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.journal_entries WHERE store_id=current_setting('atack.test.store_a')::uuid AND source_type='PAYMENT' AND source_id=current_setting('atack.test.customer_payment_id')::uuid)
+     OR NOT EXISTS(SELECT 1 FROM public.journal_entries WHERE store_id=current_setting('atack.test.store_a')::uuid AND source_type='PAYMENT' AND source_id=current_setting('atack.test.supplier_payment_id')::uuid) THEN
+    RAISE EXCEPTION 'Customer/supplier payment journal entries are missing';
+  END IF;
   SELECT COALESCE(SUM(total_debit),0),COALESCE(SUM(total_credit),0) INTO v_debit,v_credit FROM public.v_trial_balance WHERE store_id=current_setting('atack.test.store_a')::uuid;
   IF round(v_debit,4)<>round(v_credit,4) THEN RAISE EXCEPTION 'Trial balance unbalanced after RPC operations: debit %, credit %',v_debit,v_credit; END IF;
 END
