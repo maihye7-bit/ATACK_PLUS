@@ -340,6 +340,7 @@ DECLARE
  v_substitute_product UUID:='50000000-0000-4000-8000-000000000006';
  v_result JSONB; v_stock NUMERIC(18,4); v_total NUMERIC(18,4);
  v_received NUMERIC(18,4); v_excess NUMERIC(18,4); v_closed NUMERIC(18,4);
+ v_receipt_item UUID;
  v_status TEXT; v_debt_before NUMERIC(18,4); v_debt_after NUMERIC(18,4);
 BEGIN
  PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
@@ -413,6 +414,20 @@ BEGIN
       AND substitute_reason='Original unavailable; approved equivalent')
     OR (SELECT total_amount FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000006')<>45 THEN
    RAISE EXCEPTION 'Approved substitute receipt mismatch';
+ END IF;
+ -- A substitute return must remove the actual substitute, not the originally ordered product.
+ SELECT id INTO v_receipt_item FROM public.purchase_receipt_items
+  WHERE receipt_id='73000000-0000-4000-8000-000000000006' AND actual_product_id=v_substitute_product;
+ v_result:=public.process_purchase_return(v_store,'60000000-0000-4000-8000-000000000023',
+  jsonb_build_object('id','92000000-0000-4000-8000-000000000004',
+   'purchase_id','70000000-0000-4000-8000-000000000006',
+   'return_number','PH2-PRET-SUB','items',jsonb_build_array(jsonb_build_object(
+    'purchase_receipt_item_id',v_receipt_item,'product_id',v_substitute_product,
+    'quantity',1,'unit_id','pcs'))));
+ SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_substitute_product AND location_id='main';
+ SELECT total_amount INTO v_total FROM public.purchase_returns WHERE id='92000000-0000-4000-8000-000000000004';
+ IF v_stock IS DISTINCT FROM 2 OR v_total IS DISTINCT FROM 15 THEN
+   RAISE EXCEPTION 'Substitute purchase return mismatch: substitute stock %, return total %',v_stock,v_total;
  END IF;
  RAISE NOTICE 'PASS: rejected goods record, approved excess, approved substitute, and authorized partial closure';
 END
