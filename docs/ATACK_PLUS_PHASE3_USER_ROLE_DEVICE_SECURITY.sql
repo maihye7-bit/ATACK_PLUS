@@ -2,6 +2,22 @@
 -- prevent privilege escalation through user_roles and restrict device visibility.
 BEGIN;
 
+CREATE OR REPLACE FUNCTION public.user_belongs_to_current_store(p_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path=public,pg_temp
+AS $user_store_check$
+  SELECT EXISTS (
+    SELECT 1 FROM public.users u
+     WHERE u.id=p_user_id
+       AND u.store_id=public.current_user_store_id()
+  );
+$user_store_check$;
+REVOKE ALL ON FUNCTION public.user_belongs_to_current_store(UUID) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.user_belongs_to_current_store(UUID) TO authenticated;
+
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS store_isolation_select_user_roles ON public.user_roles;
 DROP POLICY IF EXISTS rbac_insert_user_roles ON public.user_roles;
@@ -11,9 +27,7 @@ DROP POLICY IF EXISTS user_roles_manager_select ON public.user_roles;
 CREATE POLICY user_roles_manager_select ON public.user_roles
   FOR SELECT TO authenticated
   USING (
-    EXISTS (SELECT 1 FROM public.users u
-             WHERE u.id=user_roles.user_id
-               AND u.store_id=public.current_user_store_id())
+    public.user_belongs_to_current_store(user_roles.user_id)
     AND public.has_store_permission(public.current_user_store_id(),'users.manage')
   );
 CREATE POLICY user_roles_deny_insert ON public.user_roles
