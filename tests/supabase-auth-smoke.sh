@@ -25,7 +25,7 @@ AUTH_USER_ID="$(jq -er '.user.id' <<<"$AUTH_RESPONSE")"
 
 echo "Seeding two stores and linking the real Auth identity to store A..."
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
-  -v auth_user_id="$AUTH_USER_ID" \
+  -v auth_user_id="$AUTH_USER_ID" -v user_a="$USER_A" \
   -v store_a="$STORE_A" -v store_b="$STORE_B" \
   -v product_a="$PRODUCT_A" -v product_b="$PRODUCT_B" <<'SQL'
 INSERT INTO public.stores(id,name) VALUES
