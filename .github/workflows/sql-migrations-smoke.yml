@@ -79,6 +79,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_BUSINESS_OPERATION_LOCK_ORDER_REPAIR.sql"
+      - name: Apply Phase 3 security hardening
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE3_SECURITY_HARDENING.sql"
       - name: Run Phase 2 business regression tests
         env:
           PGPASSWORD: postgres
@@ -87,6 +91,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: bash tests/phase2-concurrency.sh
+      - name: Run Phase 3 security regression tests
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-security-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
