@@ -52,6 +52,15 @@ BEGIN
     RAISE EXCEPTION 'Users self-profile / users.manage read policy is missing';
   END IF;
 
+  IF NOT has_table_privilege('authenticated','public.stores','SELECT') THEN
+    RAISE EXCEPTION 'authenticated lacks SELECT ACL on public.stores';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='stores' AND policyname='store_self_access'
+      AND cmd='ALL' AND permissive='PERMISSIVE') THEN
+    RAISE EXCEPTION 'Stores self-access RLS policy is missing';
+  END IF;
+
   IF position('reports.view' in pg_get_functiondef('public.check_low_stock(uuid)'::regprocedure))>0
      OR position('reports.view' in pg_get_functiondef('public.check_inventory_expiry(uuid)'::regprocedure))>0 THEN
     RAISE EXCEPTION 'Inventory report RPC references an undefined reports.view permission';
@@ -122,6 +131,10 @@ SET LOCAL ROLE authenticated;
 DO $seller_reads$
 DECLARE n INTEGER;
 BEGIN
+  SELECT count(*) INTO n FROM public.stores;
+  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.stores WHERE id='10000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Seller must see only the store resolved from their Auth identity';
+  END IF;
   SELECT count(*) INTO n FROM public.invoices;
   IF n<>1 OR NOT EXISTS(
       SELECT 1 FROM public.invoices WHERE id='88000000-0000-4000-8000-000000000002'
@@ -160,6 +173,10 @@ SET LOCAL ROLE authenticated;
 DO $owner_reads$
 DECLARE n INTEGER;
 BEGIN
+  SELECT count(*) INTO n FROM public.stores;
+  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.stores WHERE id='10000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Owner must see only its own store';
+  END IF;
   SELECT count(*) INTO n FROM public.invoices;
   IF n<2
      OR NOT EXISTS(SELECT 1 FROM public.invoices WHERE id='88000000-0000-4000-8000-000000000001')
@@ -185,5 +202,27 @@ BEGIN
   RAISE NOTICE 'PASS: owner sees all sellers'' invoices, purchases, inventory, accounting and seller profiles with cross-store isolation';
 END
 $owner_reads$;
+RESET ROLE;
+
+-- A real second-store identity must see its own store and own-store users only.
+SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000002',TRUE);
+SET LOCAL ROLE authenticated;
+DO $second_store_reads$
+DECLARE n INTEGER;
+BEGIN
+  SELECT count(*) INTO n FROM public.stores;
+  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.stores WHERE id='10000000-0000-4000-8000-000000000002') THEN
+    RAISE EXCEPTION 'Second-store owner can see another store or cannot see its own';
+  END IF;
+  SELECT count(*) INTO n FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000002';
+  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.users WHERE id='30000000-0000-4000-8000-000000000002') THEN
+    RAISE EXCEPTION 'Second-store owner cannot see exactly its own store users';
+  END IF;
+  IF EXISTS(SELECT 1 FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Second-store owner can read first-store user profiles';
+  END IF;
+  RAISE NOTICE 'PASS: second-store owner sees only its own store and users';
+END
+$second_store_reads$;
 RESET ROLE;
 ROLLBACK;
