@@ -62,7 +62,7 @@ BEGIN
       FROM pg_proc p
       JOIN pg_namespace n ON n.oid=p.pronamespace
       CROSS JOIN LATERAL regexp_matches(
-        pg_get_functiondef(p.oid),
+        p.prosrc,
         'has_store_permission\s*\([^,]+,\s*''([^'']+)''',
         'g'
       ) AS m(matches)
@@ -78,7 +78,7 @@ BEGIN
   -- business-operation claim helper.
   FOR r IN
     SELECT p.proname,pg_get_function_identity_arguments(p.oid) AS args,
-           pg_get_functiondef(p.oid) AS body
+           p.prosrc AS body
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
      WHERE n.nspname='public' AND p.prosecdef
        AND has_function_privilege('authenticated',p.oid,'EXECUTE')
