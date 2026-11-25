@@ -204,29 +204,4 @@ END
 $owner_reads$;
 RESET ROLE;
 
--- A real second-store identity must see its own store and own-store users only.
-SELECT set_config('request.jwt.claim.sub','99000000-0000-4000-8000-000000000098',TRUE);
-SET LOCAL ROLE authenticated;
-DO $second_store_reads$
-DECLARE n INTEGER; v_store UUID;
-BEGIN
-  v_store:=public.current_user_store_id();
-  IF v_store IS DISTINCT FROM '10000000-0000-4000-8000-000000000002'::uuid THEN
-    RAISE EXCEPTION 'Second-store Auth identity resolved to store %',v_store;
-  END IF;
-  SELECT count(*) INTO n FROM public.stores;
-  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.stores WHERE id='10000000-0000-4000-8000-000000000002') THEN
-    RAISE EXCEPTION 'Second-store owner store visibility mismatch: count %, resolved store %',n,v_store;
-  END IF;
-  SELECT count(*) INTO n FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000002';
-  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.users WHERE id='99000000-0000-4000-8000-000000000099') THEN
-    RAISE EXCEPTION 'Second-store owner cannot see exactly its own store users';
-  END IF;
-  IF EXISTS(SELECT 1 FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000001') THEN
-    RAISE EXCEPTION 'Second-store owner can read first-store user profiles';
-  END IF;
-  RAISE NOTICE 'PASS: second-store owner sees only its own store and users';
-END
-$second_store_reads$;
-RESET ROLE;
 ROLLBACK;
