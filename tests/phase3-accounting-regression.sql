@@ -10,7 +10,6 @@ DECLARE
  v_result JSONB;
  v_debit NUMERIC(18,4); v_credit NUMERIC(18,4);
  v_count INTEGER; v_journal UUID; v_proc TEXT;
- v_bs_accounts NUMERIC(18,4); v_earnings NUMERIC(18,4); v_income NUMERIC(18,4); v_unclassified NUMERIC(18,4);
 BEGIN
  PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
 
@@ -205,19 +204,6 @@ BEGIN
 
  SELECT COALESCE(SUM(balance),0) INTO v_debit
    FROM public.v_balance_sheet WHERE store_id=v_store;
- SELECT COALESCE(SUM(balance),0) INTO v_bs_accounts
-   FROM public.v_balance_sheet WHERE store_id=v_store AND account_code<>'CURRENT_EARNINGS';
- SELECT COALESCE(SUM(balance),0) INTO v_earnings
-   FROM public.v_balance_sheet WHERE store_id=v_store AND account_code='CURRENT_EARNINGS';
- SELECT COALESCE(SUM(balance),0) INTO v_income
-   FROM public.v_income_statement WHERE store_id=v_store;
- SELECT COALESCE(SUM(balance),0) INTO v_unclassified
-   FROM public.v_trial_balance
-  WHERE store_id=v_store AND account_type NOT IN
-    ('ASSET','LIABILITY','EQUITY','CURRENT_ASSET','CURRENT_LIABILITY',
-     'REVENUE','EXPENSE','COST_OF_GOODS_SOLD','INCOME');
- RAISE NOTICE 'BALANCE DEBUG: all %, balance accounts %, earnings %, income %, unclassified %',
-   v_debit,v_bs_accounts,v_earnings,v_income,v_unclassified;
  IF v_debit<>0 THEN
    RAISE EXCEPTION 'Balance sheet equation does not balance after current earnings: %',v_debit;
  END IF;
