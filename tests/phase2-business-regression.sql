@@ -469,8 +469,8 @@ BEGIN
  END IF;
  IF NOT EXISTS(SELECT 1 FROM public.purchase_amendments
     WHERE id='75000000-0000-4000-8000-000000000007'
-      AND old_values_json->0->>'quantity'='10'
-      AND new_values_json->0->>'quantity'='12') THEN
+      AND (old_values_json->0->>'quantity')::numeric=10
+      AND (new_values_json->0->>'quantity')::numeric=12) THEN
    RAISE EXCEPTION 'Purchase amendment old/new snapshots missing';
  END IF;
 
