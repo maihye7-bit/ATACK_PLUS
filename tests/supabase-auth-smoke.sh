@@ -378,17 +378,18 @@ if [[ "${WRITE_STATUS}" != "403" ]] || [[ "$(jq -r '.code // empty' /tmp/journal
 fi
 
 echo "Verifying real JWT owner/seller read boundaries through PostgREST..."
-CASHIER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
+CASHIER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
 CASHIER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
 CASHIER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
 CASHIER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${CASHIER_TOKEN}")"
 [[ "$(jq 'length' <<<"${CASHIER_INVOICES}")" -gt 0 ]] || { echo "Seller cannot read own-store invoices"; exit 1; }
+[[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${CASHIER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${CASHIER_INVOICES}")" == "true" ]] || { echo "Seller sale invoice is not attributed to the authenticated seller"; exit 1; }
 [[ "$(jq 'length' <<<"${CASHIER_PURCHASES}")" -eq 0 ]] || { echo "Seller read purchases without purchases.read"; exit 1; }
 [[ "$(jq 'length' <<<"${CASHIER_JOURNALS}")" -eq 0 ]] || { echo "Seller read financial journals without reports.financial"; exit 1; }
 [[ "$(jq 'length' <<<"${CASHIER_PROFILES}")" -eq 1 && "$(jq -r '.[0].id' <<<"${CASHIER_PROFILES}")" == "${CASHIER_USER}" ]] || { echo "Seller profile read is not restricted to the caller's own profile"; exit 1; }
 
 
-OWNER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
+OWNER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 OWNER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 OWNER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 OWNER_STOCK="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/stock?select=product_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
@@ -396,6 +397,7 @@ OWNER_CHART="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/c
 OWNER_LEDGER="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/general_ledger?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 OWNER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 [[ "$(jq 'length' <<<"${OWNER_INVOICES}")" -gt 0 && "$(jq 'length' <<<"${OWNER_PURCHASES}")" -gt 0 ]] || { echo "Owner cannot read store sales and purchases"; exit 1; }
+[[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${CASHIER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${OWNER_INVOICES}")" == "true" ]] || { echo "Owner cannot see the seller-attributed invoice"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_JOURNALS}")" -gt 0 && "$(jq 'length' <<<"${OWNER_CHART}")" -gt 0 && "$(jq 'length' <<<"${OWNER_LEDGER}")" -gt 0 ]] || { echo "Owner cannot read complete store accounting records"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_STOCK}")" -gt 0 ]] || { echo "Owner cannot read store inventory"; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_PROFILES}")" -eq 2 ]] || { echo "Owner cannot see all users in own store, or cross-store user isolation failed"; exit 1; }
