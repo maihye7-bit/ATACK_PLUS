@@ -297,11 +297,14 @@ BEGIN
 
  IF v_purchase_delta<>0 THEN
    UPDATE public.purchases SET subtotal=subtotal+v_purchase_delta,total_amount=total_amount+v_purchase_delta,
-     remaining_amount=GREATEST(remaining_amount+v_purchase_delta,0),updated_at=NOW() WHERE id=v_purchase;
+     remaining_amount=GREATEST(remaining_amount+v_purchase_delta,0),
+     status=CASE WHEN GREATEST(remaining_amount+v_purchase_delta,0)=0 THEN 'PAID'
+                 WHEN paid_amount>0 THEN 'PARTIAL' ELSE 'OPEN' END,
+     updated_at=NOW() WHERE id=v_purchase;
    IF v_purchase_delta>0 THEN
      UPDATE public.suppliers SET current_debt=current_debt+v_purchase_delta,updated_at=NOW() WHERE id=v_supplier;
      INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
-     SELECT v_supplier,'ADJUSTMENT',v_purchase_delta,current_debt-credit_balance+v_purchase_delta,
+     SELECT v_supplier,'ADJUSTMENT',v_purchase_delta,current_debt-credit_balance,
        v_receipt,'Approved excess/substitute price adjustment for purchase '||v_number,v_user
       FROM public.suppliers WHERE id=v_supplier;
    ELSE
@@ -311,8 +314,7 @@ BEGIN
      UPDATE public.suppliers SET current_debt=current_debt-v_debt_reduction,
        credit_balance=credit_balance+v_credit_increase,updated_at=NOW() WHERE id=v_supplier;
      INSERT INTO public.supplier_ledger(supplier_id,type,amount,balance,reference_id,description,created_by)
-     SELECT v_supplier,'ADJUSTMENT',v_purchase_delta,
-       (current_debt-v_debt_reduction)-(credit_balance+v_credit_increase),
+     SELECT v_supplier,'ADJUSTMENT',v_purchase_delta,current_debt-credit_balance,
        v_receipt,'Approved substitute price adjustment for purchase '||v_number,v_user
       FROM public.suppliers WHERE id=v_supplier;
    END IF;
