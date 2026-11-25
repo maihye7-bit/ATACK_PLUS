@@ -154,14 +154,6 @@ rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
 rpc_call "${OWNER_TOKEN}" "manage_store_user_role" \
   "$(jq -nc --arg user "${CASHIER_USER}" '{p_target_user_id:$user,p_role_id:"admin",p_action:"REVOKE"}')" >/dev/null
 
-echo "Checking pgcrypto installation and digest function visibility..."
-psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
-  SELECT e.extname, n.nspname AS extension_schema
-    FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace
-   WHERE e.extname='pgcrypto';
-  SELECT to_regprocedure('extensions.digest(bytea,text)') AS extensions_digest,
-         to_regprocedure('public.digest(bytea,text)') AS public_digest;
-"
 echo "Verifying business RPC permission boundaries and a successful cashier sale..."
 SALE_PAYLOAD="$(jq -nc --arg id "${SALE_ID}" --arg item "${SALE_ITEM_ID}" --arg product "${PRODUCT_A}" \
   --arg number "AUTH-RPC-${GITHUB_RUN_ID:-local}" \
