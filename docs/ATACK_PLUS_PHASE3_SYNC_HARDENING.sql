@@ -24,7 +24,7 @@ DECLARE
         'purchase_returns','purchase_return_items','stock_adjustments','inventory_batches',
         'stock_alerts','chart_of_accounts','journal_entries','general_ledger',
         'purchase_receipts','purchase_receipt_items','purchase_closures',
-        'purchase_closure_items','purchase_amendments','tombstones'
+        'purchase_closure_items','purchase_amendments','tombstones','tombstones'
     ];
 BEGIN
     IF p_store_id IS NULL OR NULLIF(btrim(p_device_id),'') IS NULL
@@ -83,7 +83,7 @@ DECLARE
         'purchase_returns','purchase_return_items','stock_adjustments','inventory_batches',
         'stock_alerts','chart_of_accounts','journal_entries','general_ledger',
         'purchase_receipts','purchase_receipt_items','purchase_closures',
-        'purchase_closure_items','purchase_amendments'
+        'purchase_closure_items','purchase_amendments','tombstones'
     ];
 BEGIN
     IF p_store_id IS NULL OR NULLIF(btrim(p_device_id),'') IS NULL
