@@ -4,6 +4,15 @@
 
 BEGIN;
 
+-- D-054: closing undeliverable purchase remainder is a separate privileged action.
+INSERT INTO public.permissions(code,description)
+VALUES ('purchases.close_remaining','Authorize closing unreceived purchase quantities')
+ON CONFLICT(code) DO NOTHING;
+INSERT INTO public.role_permissions(role_id,permission_id)
+SELECT r.role_id,p.id FROM (VALUES ('owner'),('admin')) r(role_id)
+JOIN public.permissions p ON p.code='purchases.close_remaining'
+ON CONFLICT(role_id,permission_id) DO NOTHING;
+
 ALTER TABLE public.purchase_items ADD COLUMN IF NOT EXISTS excess_received_quantity NUMERIC(18,4) NOT NULL DEFAULT 0;
 ALTER TABLE public.purchase_items ADD COLUMN IF NOT EXISTS closed_quantity NUMERIC(18,4) NOT NULL DEFAULT 0;
 ALTER TABLE public.purchase_items DROP CONSTRAINT IF EXISTS purchase_items_excess_received_quantity_check;
