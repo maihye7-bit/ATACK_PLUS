@@ -52,6 +52,7 @@ BEGIN
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Seller was able to grant the owner role'; END IF;
 
+  denied:=FALSE;
   BEGIN
     PERFORM public.manage_store_user_role(
       '99000000-0000-4000-8000-000000000006','cashier','GRANT');
