@@ -380,12 +380,12 @@ BEGIN
         v_new_cost := CASE
           WHEN v_old_qty + v_base = 0 THEN v_cost/v_factor
           WHEN v_old_qty = 0 THEN v_cost/v_factor
-          ELSE round(((v_old_qty*v_old_cost)+(v_qty*v_cost))/(v_old_qty+v_base),4)
+          ELSE round(((v_old_qty*v_old_cost)+(v_received_qty*v_cost))/(v_old_qty+v_base),4)
         END;
         UPDATE public.stock SET quantity=quantity+v_base WHERE id=v_stock;
         INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
             reference_id,reference_type,batch_number,expiry_date,reason,user_id)
-        VALUES(v_product,v_location,'IN',v_base,v_primary,v_cost/v_factor,v_qty*v_cost,v_id,'purchase',
+        VALUES(v_product,v_location,'IN',v_base,v_primary,v_cost/v_factor,v_received_qty*v_cost,v_id,'purchase',
             v_item->>'batch_number',NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ,'Purchase '||v_number,v_user);
         UPDATE public.products SET cost_price=v_new_cost,updated_at=NOW() WHERE id=v_product;
     END LOOP;
