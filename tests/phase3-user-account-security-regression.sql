@@ -25,7 +25,7 @@ BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',TRUE);
 SET LOCAL ROLE authenticated;
 DO $owner_user_management$
-DECLARE v_user UUID; denied BOOLEAN:=FALSE; v_auth UUID; v_name TEXT; v_active BOOLEAN;
+DECLARE v_user UUID; denied BOOLEAN:=FALSE; v_auth UUID; v_name TEXT; v_active BOOLEAN; v_error TEXT;
 BEGIN
   v_user:=public.create_store_user_profile(
     '20000000-0000-4000-8000-000000000009',
@@ -55,7 +55,10 @@ BEGIN
       '20000000-0000-4000-8000-000000000010',
       'invalid_auth_user','Invalid Auth User','cashier',NULL,NULL
     );
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Auth identity does not exist in Supabase Auth%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'User profile was created for an Auth identity that does not exist'; END IF;
 
@@ -98,14 +101,17 @@ BEGIN;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000005',TRUE);
 SET LOCAL ROLE authenticated;
 DO $admin_user_limits$
-DECLARE denied BOOLEAN:=FALSE;
+DECLARE denied BOOLEAN:=FALSE; v_error TEXT;
 BEGIN
   BEGIN
     PERFORM public.create_store_user_profile(
       '20000000-0000-4000-8000-000000000010',
       'admin_cannot_create_owner','Admin Cannot Create Owner','owner',NULL,NULL
     );
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Could not grant initial user role%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Admin created a user with owner-level permissions'; END IF;
   IF EXISTS(SELECT 1 FROM public.users WHERE auth_user_id='20000000-0000-4000-8000-000000000010') THEN
@@ -118,7 +124,10 @@ BEGIN
       '30000000-0000-4000-8000-000000000001',
       'Owner Account','owner@example.test',NULL,FALSE
     );
-  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Cannot deactivate a user holding permissions the caller does not hold%' THEN RAISE; END IF;
+    denied:=TRUE;
   END;
   IF NOT denied THEN RAISE EXCEPTION 'Admin deactivated an owner holding permissions it does not have'; END IF;
   RAISE NOTICE 'PASS: admin cannot provision elevated owner role or deactivate a more-privileged owner';
