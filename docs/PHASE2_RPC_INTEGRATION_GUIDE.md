@@ -55,13 +55,31 @@ Payload fields: `id`, `purchase_number`, `supplier_id`, optional `purchase_date`
 
 The server calculates totals, receives the quantities into stock, writes movements and supplier ledger entries, and records an optional supplier payment atomically.
 
-### 3. Customer payment
+### 3. Partial purchase receiving
+
+The purchase RPC accepts an optional `received_quantity` on each item. If omitted, it defaults to the ordered quantity for backward compatibility. Set it to zero to create an order without receiving stock, or to a value between zero and the ordered quantity for an initial partial receipt.
+
+For each later receipt, call `process_purchase_receipt`:
+
+- `p_store_id`: authenticated user's store UUID.
+- `p_operation_id`: stable UUID for this receipt operation.
+- `p_payload`: `{id, purchase_id, location_id?, items:[{purchase_item_id, quantity}]}`.
+
+The RPC requires `purchases.receive`. It locks the purchase and purchase lines, rejects quantities above the outstanding amount, updates `purchase_items.received_quantity`, stock, stock movements, weighted average cost, and `purchases.receiving_status` atomically. Replaying the same operation ID and payload is safe.
+
+Receiving status is tracked independently from payment status:
+- `PENDING`: no line quantity received.
+- `PARTIAL`: at least one quantity received and at least one line remains outstanding.
+- `COMPLETE`: every purchase line is fully received.
+- `CLOSED`: reserved for a future explicit close-remaining operation; not set by this RPC.
+
+### 4. Customer payment
 
 RPC: `process_customer_payment`
 
 Payload fields: `id`, `customer_id`, `amount`, `payment_method`, optional `reference_no`, `notes`, and optional `allocations[]` (`invoice_id`, `amount`). Explicit allocations are applied first; any remainder is allocated FIFO to the customer's oldest outstanding sale invoices. If the whole payment cannot be allocated, the transaction is rejected. Payments larger than current debt are rejected in this version.
 
-### 4. Supplier payment
+### 5. Supplier payment
 
 RPC: `process_supplier_payment`
 
