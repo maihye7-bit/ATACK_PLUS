@@ -43,6 +43,9 @@ CUSTOMER_SALE_ITEM_ID="a5000000-0000-4000-8000-000000000005"
 CUSTOMER_SALE_OPERATION="a5000000-0000-4000-8000-000000000006"
 CUSTOMER_PAYMENT_ID="a5000000-0000-4000-8000-000000000007"
 CUSTOMER_PAYMENT_OPERATION="a5000000-0000-4000-8000-000000000008"
+SYNC_DEVICE_A="a7000000-0000-4000-8000-000000000001"
+OUTBOX_CATEGORY_ID="a7000000-0000-4000-8000-000000000002"
+OUTBOX_IDEMPOTENCY_KEY="a7000000-0000-4000-8000-000000000003"
 
 signup_identity() {
   local label="$1"
@@ -76,7 +79,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v store_a="$STORE_A" -v store_b="$STORE_B" \
   -v product_a="$PRODUCT_A" -v product_b="$PRODUCT_B" \
   -v store_b_user="$STORE_B_USER" -v supplier_a="$SUPPLIER_A" \
-  -v customer_a="$CUSTOMER_A" <<'SQL'
+  -v customer_a="$CUSTOMER_A" -v sync_device_a="$SYNC_DEVICE_A" <<'SQL'
 INSERT INTO public.stores(id,name) VALUES
   (:'store_a'::uuid,'Auth smoke store A'),
   (:'store_b'::uuid,'Auth smoke store B');
@@ -110,6 +113,9 @@ VALUES
 
 INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
 VALUES (:'product_a'::uuid,'main',10,0);
+
+INSERT INTO public.devices(id,store_id,device_name,device_type)
+VALUES (:'sync_device_a'::uuid,:'store_a'::uuid,'Auth Smoke Sync Device','DESKTOP');
 
 NOTIFY pgrst, 'reload schema';
 SQL
@@ -209,6 +215,35 @@ expect_rpc_denied "admin invoking a business RPC for another store" "${ADMIN_TOK
   "$(jq -nc --arg store "${STORE_B}" --arg op "b5000000-0000-4000-8000-000000000005" --argjson payload "${SALE_PAYLOAD}" \
     '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
 
+echo "Verifying Push/Outbox enqueue and apply with a real Supabase Auth JWT..."
+OUTBOX_RECORD="$(jq -nc --arg id "$OUTBOX_CATEGORY_ID" --arg store "$STORE_A" '{id:$id,store_id:$store,name:"JWT Outbox category",is_active:true}')"
+OUTBOX_ARGS="$(jq -nc --arg store "$STORE_A" --arg device "$SYNC_DEVICE_A" --arg record "$OUTBOX_CATEGORY_ID" --arg key "$OUTBOX_IDEMPOTENCY_KEY" --argjson payload "$OUTBOX_RECORD" '{p_store_id:$store,p_device_id:$device,p_table_name:"categories",p_operation:"INSERT",p_record_uuid:$record,p_idempotency_key:$key,p_record_json:$payload}')"
+OUTBOX_ID="$(rpc_call "$ADMIN_TOKEN" "create_outbox_entry" "$OUTBOX_ARGS" | jq -er '.')"
+OUTBOX_REPLAY_ID="$(rpc_call "$ADMIN_TOKEN" "create_outbox_entry" "$OUTBOX_ARGS" | jq -er '.')"
+[[ "$OUTBOX_ID" == "$OUTBOX_REPLAY_ID" ]] || { echo "JWT Push replay created a duplicate Outbox entry" >&2; exit 1; }
+APPLY_ARGS="$(jq -nc --arg id "$OUTBOX_ID" '{p_outbox_id:$id}')"
+APPLY_RESULT="$(rpc_call "$ADMIN_TOKEN" "apply_outbox_operation" "$APPLY_ARGS")"
+[[ "$(jq -r '.success' <<<"$APPLY_RESULT")" == "true" ]] || { echo "JWT Outbox apply failed: $APPLY_RESULT" >&2; exit 1; }
+APPLY_REPLAY="$(rpc_call "$ADMIN_TOKEN" "apply_outbox_operation" "$APPLY_ARGS")"
+[[ "$(jq -r '.success' <<<"$APPLY_REPLAY")" == "true" && "$(jq -r '.duplicate' <<<"$APPLY_REPLAY")" == "true" ]] || { echo "JWT Outbox apply replay was not idempotent: $APPLY_REPLAY" >&2; exit 1; }
+CROSS_STORE_ARGS="$(jq -nc --arg device "$SYNC_DEVICE_A" --arg record "a7000000-0000-4000-8000-000000000004" --arg key "a7000000-0000-4000-8000-000000000005" '{p_store_id:"b1000000-0000-4000-8000-000000000002",p_device_id:$device,p_table_name:"categories",p_operation:"INSERT",p_record_uuid:$record,p_idempotency_key:$key,p_record_json:{id:$record,store_id:"b1000000-0000-4000-8000-000000000002",name:"Cross-store JWT Push"}}')"
+expect_rpc_error "JWT Push targeting another store" "$ADMIN_TOKEN" "create_outbox_entry" "$CROSS_STORE_ARGS" "P0001"
+PROTECTED_PUSH_ARGS="$(jq -nc --arg store "$STORE_A" --arg device "$SYNC_DEVICE_A" --arg record "a7000000-0000-4000-8000-000000000006" --arg key "a7000000-0000-4000-8000-000000000007" '{p_store_id:$store,p_device_id:$device,p_table_name:"categories",p_operation:"INSERT",p_record_uuid:$record,p_idempotency_key:$key,p_record_json:{id:$record,store_id:$store,name:"Protected JWT Push",created_by:"forbidden"}}')"
+expect_rpc_error "JWT Push containing protected columns" "$ADMIN_TOKEN" "create_outbox_entry" "$PROTECTED_PUSH_ARGS" "P0001"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v outbox_category="$OUTBOX_CATEGORY_ID" -v store_a="$STORE_A" <<'SQL'
+SELECT set_config('atack.test.outbox_category', :'outbox_category', false);
+SELECT set_config('atack.test.store_a', :'store_a', false);
+DO $assert_jwt_outbox$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.categories
+    WHERE id=current_setting('atack.test.outbox_category')::uuid
+      AND store_id=current_setting('atack.test.store_a')::uuid
+      AND name='JWT Outbox category') THEN
+    RAISE EXCEPTION 'Real JWT Outbox operation did not persist the category';
+  END IF;
+END
+$assert_jwt_outbox$;
+SQL
 echo "Verifying purchase, partial receipt, returns, stock adjustment and accounting via real JWT RPCs..."
 PURCHASE_PAYLOAD="$(jq -nc --arg id "$PURCHASE_ID" --arg item "$PURCHASE_ITEM_ID" --arg supplier "$SUPPLIER_A" --arg product "$PRODUCT_A" --arg number "AUTH-PUR-$GITHUB_RUN_ID" '{id:$id,purchase_number:$number,supplier_id:$supplier,paid_amount:0,items:[{id:$item,product_id:$product,quantity:4,received_quantity:0,unit_id:"pcs",unit_price:12,cost_per_unit:12}]}')"
 PURCHASE_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$PURCHASE_OPERATION" --argjson payload "$PURCHASE_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
@@ -365,4 +400,4 @@ if [[ "${WRITE_STATUS}" != "403" ]] || [[ "$(jq -r '.code // empty' /tmp/journal
   exit 1
 fi
 
-echo "PASS: real Supabase Auth JWT role matrix, store isolation, role-management RPC, business RPC permissions and protected accounting writes"
+echo "PASS: real Supabase Auth JWT role matrix, store isolation, role-management RPC, Push/Outbox RPCs, business RPC permissions and protected accounting writes"
