@@ -17,6 +17,7 @@ ON CONFLICT (role_id,permission_id) DO NOTHING;
 -- Audit trail: append-only, visible only to users with audit.read in their store.
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS store_isolation_all ON public.audit_logs;
+DROP POLICY IF EXISTS store_isolation_select_audit_logs ON public.audit_logs;
 DROP POLICY IF EXISTS audit_logs_store_select ON public.audit_logs;
 CREATE POLICY audit_logs_store_select ON public.audit_logs
   FOR SELECT TO authenticated
