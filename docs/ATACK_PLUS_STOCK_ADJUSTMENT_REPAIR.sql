@@ -170,8 +170,8 @@ BEGIN
 
  IF v_new_qty<0 THEN
    INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,new_values_json)
-   VALUES(p_store_id,v_user,'STOCK_ADJUSTMENT',v_id,'NEGATIVE_STOCK',
-     jsonb_build_object('old_quantity',v_current_qty,'new_quantity',v_new_qty,
+   VALUES(p_store_id,v_user,'STOCK_ADJUSTMENT',v_id,'UPDATE',
+     jsonb_build_object('event','NEGATIVE_STOCK','old_quantity',v_current_qty,'new_quantity',v_new_qty,
        'adjusted_quantity',v_base_qty,'reason',v_reason,'permission','inventory.allow_negative'));
  END IF;
  RETURN jsonb_build_object('success',TRUE,'replayed',FALSE,'adjustment_id',v_id,
