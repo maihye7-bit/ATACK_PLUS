@@ -92,6 +92,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-business-regression.sql"
+      - name: Run authenticated business RPC regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-authenticated-business-rpc-regression.sql"
       - name: Run concurrent purchase regression
         env:
           PGPASSWORD: postgres
