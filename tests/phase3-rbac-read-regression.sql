@@ -205,7 +205,7 @@ $owner_reads$;
 RESET ROLE;
 
 -- A real second-store identity must see its own store and own-store users only.
-SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000002',TRUE);
+SELECT set_config('request.jwt.claim.sub','99000000-0000-4000-8000-000000000098',TRUE);
 SET LOCAL ROLE authenticated;
 DO $second_store_reads$
 DECLARE n INTEGER; v_store UUID;
@@ -219,7 +219,7 @@ BEGIN
     RAISE EXCEPTION 'Second-store owner store visibility mismatch: count %, resolved store %',n,v_store;
   END IF;
   SELECT count(*) INTO n FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000002';
-  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.users WHERE id='30000000-0000-4000-8000-000000000002') THEN
+  IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.users WHERE id='99000000-0000-4000-8000-000000000099') THEN
     RAISE EXCEPTION 'Second-store owner cannot see exactly its own store users';
   END IF;
   IF EXISTS(SELECT 1 FROM public.users WHERE store_id='10000000-0000-4000-8000-000000000001') THEN
