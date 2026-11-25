@@ -85,6 +85,18 @@ BEGIN
   denied:=FALSE;
   BEGIN
     PERFORM public.manage_store_user_role(
+      '99000000-0000-4000-8000-000000000007','cashier',NULL);
+  EXCEPTION WHEN raise_exception THEN denied:=TRUE;
+  END;
+  IF NOT denied THEN RAISE EXCEPTION 'RPC treated NULL action as REVOKE'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.user_roles
+      WHERE user_id='99000000-0000-4000-8000-000000000007' AND role_id='cashier') THEN
+    RAISE EXCEPTION 'NULL role action removed the target role';
+  END IF;
+
+  denied:=FALSE;
+  BEGIN
+    PERFORM public.manage_store_user_role(
       '30000000-0000-4000-8000-000000000004','cashier','GRANT');
   EXCEPTION WHEN raise_exception THEN denied:=TRUE;
   END;
