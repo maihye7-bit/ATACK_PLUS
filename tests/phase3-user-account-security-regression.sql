@@ -1,8 +1,6 @@
 -- Controlled user profile creation/update security regressions.
 INSERT INTO auth.users(id)
-VALUES
- ('20000000-0000-4000-8000-000000000009'),
- ('20000000-0000-4000-8000-000000000010')
+VALUES ('20000000-0000-4000-8000-000000000009')
 ON CONFLICT (id) DO NOTHING;
 
 DO $user_acl$
