@@ -74,7 +74,8 @@ BEGIN
      RAISE EXCEPTION 'Amended ordered quantity cannot be below received plus closed quantity for item %',v_item
        USING ERRCODE='23514';
    END IF;
-   v_delta:=v_delta+(v_new_qty*v_new_price)-(v_old_qty*v_old_price);
+   -- Closed quantities were financially cancelled by the closure RPC; do not re-add them.
+   v_delta:=v_delta+((v_new_qty-v_closed)*v_new_price)-((v_old_qty-v_closed)*v_old_price);
    v_old:=v_old||jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,
      'quantity',v_old_qty,'unit_price',v_old_price,'cost_per_unit',v_old_cost,
      'received_quantity',v_received,'closed_quantity',v_closed));
@@ -111,6 +112,10 @@ BEGIN
  INSERT INTO public.purchase_amendments(id,store_id,purchase_id,operation_id,reason,
    old_values_json,new_values_json,changed_by)
  VALUES(v_id,p_store_id,v_purchase,p_operation_id,v_reason,v_old,v_new,v_user);
+ UPDATE public.purchase_amendments
+    SET debt_reduction=CASE WHEN v_delta<0 THEN v_debt_reduction ELSE 0 END,
+        supplier_credit_created=v_credit_increase
+  WHERE id=v_id;
  INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,old_values_json,new_values_json)
  VALUES(p_store_id,v_user,'PURCHASE_AMENDMENT',v_id,'UPDATE',v_old,
    jsonb_build_object('items',v_new,'reason',v_reason));
