@@ -990,7 +990,7 @@ CREATE TRIGGER trg_purchase_returns_same_store
 -- Phase 1's generic return_id branch is sales-specific; purchase returns use
 -- purchase_returns -> purchases and must not be resolved through sales_returns.
 CREATE OR REPLACE FUNCTION public.trg_log_change()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $log_change$
 DECLARE
     v_row JSONB;
     v_store_id UUID;
@@ -1057,7 +1057,7 @@ BEGIN
         RETURN OLD;
     END IF;
 END;
-$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+$log_change$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- Change log triggers for purchase_returns
 CREATE TRIGGER trg_purchase_returns_log_change
