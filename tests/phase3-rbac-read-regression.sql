@@ -93,16 +93,23 @@ VALUES
   '10000000-0000-4000-8000-000000000001','rbac_read_owner','RBAC Read Owner',TRUE)
 ON CONFLICT(id) DO NOTHING;
 
--- The pre-existing invoice 800...001 belongs to the owner; this one belongs
--- to the seller and must be the only invoice visible to that seller.
+-- Create one owner invoice and one seller invoice in the same store.
 INSERT INTO public.invoices(
  id,store_id,invoice_number,type,invoice_date,total_amount,created_by
-) VALUES (
- '80000000-0000-4000-8000-000000000002',
- '10000000-0000-4000-8000-000000000001',
- 'RBAC-SELLER-OWN-001','SALE',NOW(),0,
- '99100000-0000-4000-8000-000000000001'
-) ON CONFLICT(id) DO NOTHING;
+) VALUES
+ (
+  '80000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001',
+  'RBAC-OWNER-ALL-001','SALE',NOW(),0,
+  '30000000-0000-4000-8000-000000000001'
+ ),
+ (
+  '80000000-0000-4000-8000-000000000002',
+  '10000000-0000-4000-8000-000000000001',
+  'RBAC-SELLER-OWN-001','SALE',NOW(),0,
+  '99100000-0000-4000-8000-000000000001'
+ )
+ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO public.user_roles(user_id,role_id)
 VALUES
