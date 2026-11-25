@@ -82,14 +82,14 @@ BEGIN
     RAISE EXCEPTION 'Owner could not grant seller role: %',result;
   END IF;
   result:=public.manage_store_user_role(
-    '99000000-0000-4000-8000-000000000006','stock_keeper','GRANT');
-  IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
-    RAISE EXCEPTION 'Owner could not grant an optional delegated role: %',result;
-  END IF;
-  result:=public.manage_store_user_role(
     '99000000-0000-4000-8000-000000000006','cashier','REVOKE');
   IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
-    RAISE EXCEPTION 'Owner could not revoke a delegated role: %',result;
+    RAISE EXCEPTION 'Owner could not revoke a seller role: %',result;
+  END IF;
+  result:=public.manage_store_user_role(
+    '99000000-0000-4000-8000-000000000006','cashier','GRANT');
+  IF COALESCE((result->>'success')::BOOLEAN,FALSE) IS NOT TRUE THEN
+    RAISE EXCEPTION 'Owner could not restore the seller role: %',result;
   END IF;
 
   denied:=FALSE;
@@ -128,7 +128,7 @@ BEGIN
   SELECT count(*) INTO n FROM public.user_roles
    WHERE user_id='99000000-0000-4000-8000-000000000006';
   IF n<>1 OR NOT EXISTS(SELECT 1 FROM public.user_roles
-      WHERE user_id='99000000-0000-4000-8000-000000000006' AND role_id='stock_keeper') THEN
+      WHERE user_id='99000000-0000-4000-8000-000000000006' AND role_id='cashier') THEN
     RAISE EXCEPTION 'Owner delegation did not persist the expected optional role';
   END IF;
   RAISE NOTICE 'PASS: owner can manage seller roles and optional delegation without crossing stores or removing a final role';
