@@ -783,8 +783,13 @@ ORDER BY store_id,account_code;
 
 CREATE OR REPLACE VIEW public.v_income_statement WITH (security_invoker=true) AS
 SELECT coa.account_code,coa.account_name,coa.account_type,
- COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
- COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0) AS balance,
+ CASE WHEN coa.account_type IN ('REVENUE','INCOME') THEN
+   COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)-
+   COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)
+ ELSE
+   COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='DEBIT'),0)-
+   COALESCE(SUM(gl.amount) FILTER(WHERE gl.entry_type='CREDIT'),0)
+ END AS balance,
  coa.store_id
 FROM public.chart_of_accounts coa
 LEFT JOIN public.general_ledger gl ON gl.account_id=coa.id AND gl.store_id=coa.store_id
