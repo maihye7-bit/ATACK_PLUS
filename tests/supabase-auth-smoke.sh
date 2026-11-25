@@ -32,12 +32,11 @@ INSERT INTO public.stores(id,name) VALUES
   (:'store_a'::uuid,'Auth smoke store A'),
   (:'store_b'::uuid,'Auth smoke store B');
 
-INSERT INTO public.users(auth_user_id,store_id,username,full_name,is_active)
-VALUES (:'auth_user_id'::uuid,:'store_a'::uuid,'auth-smoke-owner','Auth Smoke Owner',TRUE)
-RETURNING id gset
+INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
+VALUES (:'user_a'::uuid,:'auth_user_id'::uuid,:'store_a'::uuid,'auth-smoke-owner','Auth Smoke Owner',TRUE);
 
 INSERT INTO public.user_roles(user_id,role_id)
-VALUES (:'id'::uuid,'admin');
+VALUES (:'user_a'::uuid,'admin');
 
 INSERT INTO public.products(store_id,id,name,primary_unit_id)
 VALUES
