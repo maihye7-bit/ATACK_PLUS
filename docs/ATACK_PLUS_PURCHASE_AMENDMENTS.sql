@@ -2,6 +2,15 @@
 -- Applies after ATACK_PLUS_PURCHASE_RECEIVING_EXTENSIONS.sql.
 
 BEGIN;
+-- D-055: amendments after receipt require an independent privileged permission.
+INSERT INTO public.permissions(code,description)
+VALUES ('purchases.edit_after_receipt','Authorize purchase amendments after receipt')
+ON CONFLICT(code) DO NOTHING;
+INSERT INTO public.role_permissions(role_id,permission_id)
+SELECT r.role_id,p.id FROM (VALUES ('owner'),('admin')) r(role_id)
+JOIN public.permissions p ON p.code='purchases.edit_after_receipt'
+ON CONFLICT(role_id,permission_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS public.purchase_amendments (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
  store_id UUID NOT NULL REFERENCES public.stores(id),
@@ -41,7 +50,7 @@ DECLARE
  v_reason TEXT:=NULLIF(btrim(p_payload->>'reason'),'');
  v_supplier UUID; v_row JSONB; v_item UUID; v_product UUID; v_unit TEXT;
  v_old_qty NUMERIC(18,4); v_old_price NUMERIC(18,4); v_old_cost NUMERIC(18,4);
- v_received NUMERIC(18,4); v_closed NUMERIC(18,4);
+ v_received NUMERIC(18,4); v_returned NUMERIC(18,4); v_closed NUMERIC(18,4);
  v_new_qty NUMERIC(18,4); v_new_price NUMERIC(18,4); v_new_cost NUMERIC(18,4);
  v_primary TEXT; v_factor NUMERIC(18,6); v_product_cost NUMERIC(18,4); v_stock_qty NUMERIC(18,4);
  v_received_base NUMERIC(18,4); v_cost_delta NUMERIC(18,4);
@@ -71,12 +80,14 @@ BEGIN
      INTO v_product,v_unit,v_old_qty,v_old_price,v_old_cost,v_received,v_closed
      FROM public.purchase_items WHERE id=v_item AND purchase_id=v_purchase FOR UPDATE;
    IF NOT FOUND THEN RAISE EXCEPTION 'Purchase item not found in this purchase'; END IF;
+   SELECT COALESCE(SUM(pri.quantity),0) INTO v_returned
+     FROM public.purchase_return_items pri WHERE pri.purchase_item_id=v_item;
    v_new_qty:=COALESCE(NULLIF(v_row->>'quantity','')::NUMERIC,v_old_qty);
    v_new_price:=COALESCE(NULLIF(v_row->>'unit_price','')::NUMERIC,v_old_price);
    v_new_cost:=COALESCE(NULLIF(v_row->>'cost_per_unit','')::NUMERIC,v_old_cost);
    IF v_new_qty<=0 OR v_new_price<0 OR v_new_cost<0 THEN RAISE EXCEPTION 'Invalid amended purchase values'; END IF;
-   IF v_new_qty<v_received+v_closed THEN
-     RAISE EXCEPTION 'Amended ordered quantity cannot be below received plus closed quantity for item %',v_item
+   IF v_new_qty<v_received+v_returned+v_closed THEN
+     RAISE EXCEPTION 'Amended ordered quantity cannot be below received, returned and closed quantity for item %',v_item
        USING ERRCODE='23514';
    END IF;
    -- Closed quantities were financially cancelled by the closure RPC; do not re-add them.
@@ -89,7 +100,7 @@ BEGIN
      'received_quantity',v_received,'closed_quantity',v_closed));
 
    -- Revalue only the on-hand portion of received units; the consumed portion adjusts COGS.
-   v_cost_delta:=v_received*(v_new_cost-v_old_cost);
+   v_cost_delta:=(v_received-v_returned)*(v_new_cost-v_old_cost);
    v_transit_delta:=((v_new_qty-v_received-v_closed)*v_new_cost)-
                     ((v_old_qty-v_received-v_closed)*v_old_cost);
    v_inventory_delta:=0;
@@ -106,7 +117,7 @@ BEGIN
      END IF;
      SELECT GREATEST(COALESCE(SUM(quantity),0),0) INTO v_stock_qty
        FROM public.stock WHERE product_id=v_product;
-     v_received_base:=v_received*v_factor;
+     v_received_base:=(v_received-v_returned)*v_factor;
      IF v_stock_qty>0 THEN
        v_inventory_delta:=v_cost_delta*LEAST(v_received_base,v_stock_qty)/v_received_base;
        IF v_product_cost+(v_inventory_delta/v_stock_qty)<0 THEN
