@@ -520,8 +520,8 @@ DECLARE
  v_store UUID:='10000000-0000-4000-8000-000000000001';
  v_owner_auth UUID:='20000000-0000-4000-8000-000000000001';
  v_owner UUID:='30000000-0000-4000-8000-000000000001';
- v_cashier_auth UUID:='20000000-0000-4000-8000-000000000002';
- v_cashier UUID:='30000000-0000-4000-8000-000000000002';
+ v_seller_auth UUID:='20000000-0000-4000-8000-000000000002';
+ v_seller UUID:='30000000-0000-4000-8000-000000000002';
  v_product UUID:='50000000-0000-4000-8000-000000000008';
  v_result JSONB; v_qty NUMERIC(18,4); v_cost NUMERIC(18,4);
  v_debit NUMERIC(18,4); v_credit NUMERIC(18,4); v_total NUMERIC(18,4);
@@ -587,9 +587,9 @@ BEGIN
 
  -- Seller has no stock-adjustment permission; stock control remains with the owner.
  INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
- VALUES(v_cashier,v_cashier_auth,v_store,'phase2_seller','Phase 2 Seller',TRUE);
- INSERT INTO public.user_roles(user_id,role_id) VALUES(v_cashier,'cashier');
- PERFORM set_config('request.jwt.claim.sub',v_cashier_auth::text,TRUE);
+ VALUES(v_seller,v_seller_auth,v_store,'phase2_seller','Phase 2 Seller',TRUE);
+ INSERT INTO public.user_roles(user_id,role_id) VALUES(v_seller,'cashier');
+ PERFORM set_config('request.jwt.claim.sub',v_seller_auth::text,TRUE);
  BEGIN
   PERFORM public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000026',
    jsonb_build_object('id','76000000-0000-4000-8000-000000000010',
