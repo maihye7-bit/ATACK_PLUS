@@ -81,11 +81,21 @@ BEGIN
      OR COALESCE((v_result->>'duplicate')::BOOLEAN,FALSE) IS NOT TRUE THEN
     RAISE EXCEPTION 'Authenticated Outbox apply replay was not idempotent: %',v_result;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.categories
-    WHERE id=v_record AND store_id=v_store AND name='Authenticated Outbox category') THEN
-    RAISE EXCEPTION 'Authenticated Outbox operation did not persist its metadata row';
-  END IF;
   RAISE NOTICE 'PASS: authenticated Push enqueue/apply, store isolation, protected columns and idempotent replay';
 END
 $authenticated_push$;
+
+-- Verify the persisted result only after leaving the application role; direct table
+-- reads are intentionally not granted by the current migration ordering.
+RESET ROLE;
+DO $assert_authenticated_push$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.categories
+    WHERE id='97000000-0000-4000-8000-000000000001'
+      AND store_id='10000000-0000-4000-8000-000000000001'
+      AND name='Authenticated Outbox category') THEN
+    RAISE EXCEPTION 'Authenticated Outbox operation did not persist its metadata row';
+  END IF;
+END
+$assert_authenticated_push$;
 ROLLBACK;
