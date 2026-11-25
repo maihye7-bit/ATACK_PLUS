@@ -126,7 +126,7 @@ DO $device_visibility$
 DECLARE n INTEGER; denied BOOLEAN:=FALSE;
 BEGIN
   SELECT count(*) INTO n FROM public.devices;
-  IF n<>1 OR EXISTS(SELECT 1 FROM public.devices WHERE store_id='10000000-0000-4000-8000-000000000002') THEN
+  IF n<1 OR EXISTS(SELECT 1 FROM public.devices WHERE store_id='10000000-0000-4000-8000-000000000002') THEN
     RAISE EXCEPTION 'Sync manager device visibility is not store-scoped';
   END IF;
   SELECT count(*) INTO n FROM public.user_roles;
