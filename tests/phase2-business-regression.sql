@@ -92,3 +92,82 @@ BEGIN
     RAISE NOTICE 'PASS: weighted average cost, purchase stock, purchase VAT deferral, sale VAT deferral';
 END
 $phase2_test$;
+
+-- D-052: initial partial receipt, incremental receipt, replay, over-receipt rejection,
+-- and final completion must update only the actually received stock.
+DO $partial_receipt_test$
+DECLARE
+    v_store UUID := '10000000-0000-4000-8000-000000000001';
+    v_auth UUID := '20000000-0000-4000-8000-000000000001';
+    v_supplier UUID := '40000000-0000-4000-8000-000000000001';
+    v_product UUID := '50000000-0000-4000-8000-000000000002';
+    v_purchase UUID := '70000000-0000-4000-8000-000000000003';
+    v_item UUID := '71000000-0000-4000-8000-000000000003';
+    v_result JSONB;
+    v_qty NUMERIC(18,4);
+    v_received NUMERIC(18,4);
+    v_status TEXT;
+BEGIN
+    PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
+    INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
+    VALUES(v_product,v_store,'Partial Receipt Test','pcs',0,TRUE);
+
+    v_result:=public.process_purchase(
+      v_store,'60000000-0000-4000-8000-000000000004',
+      jsonb_build_object('id',v_purchase,'purchase_number','PH2-PUR-PARTIAL',
+        'supplier_id',v_supplier,'paid_amount',0,
+        'items',jsonb_build_array(jsonb_build_object('id',v_item,'product_id',v_product,
+          'quantity',10,'received_quantity',4,'unit_id','pcs','unit_price',30,
+          'cost_per_unit',30)))
+    );
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
+    SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
+    IF v_qty IS DISTINCT FROM 4 OR v_received IS DISTINCT FROM 4 OR v_status IS DISTINCT FROM 'PARTIAL' THEN
+      RAISE EXCEPTION 'Initial partial receipt mismatch: stock %, received %, status %',v_qty,v_received,v_status;
+    END IF;
+
+    v_result:=public.process_purchase_receipt(
+      v_store,'60000000-0000-4000-8000-000000000005',
+      jsonb_build_object('id','72000000-0000-4000-8000-000000000003','purchase_id',v_purchase,
+        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3)))
+    );
+    IF (v_result->>'replayed')::boolean IS DISTINCT FROM FALSE THEN RAISE EXCEPTION 'First receipt unexpectedly replayed'; END IF;
+
+    -- Exact retry is idempotent.
+    v_result:=public.process_purchase_receipt(
+      v_store,'60000000-0000-4000-8000-000000000005',
+      jsonb_build_object('id','72000000-0000-4000-8000-000000000003','purchase_id',v_purchase,
+        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3)))
+    );
+    IF (v_result->>'replayed')::boolean IS DISTINCT FROM TRUE THEN RAISE EXCEPTION 'Receipt retry was not idempotent'; END IF;
+
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    IF v_qty IS DISTINCT FROM 7 THEN RAISE EXCEPTION 'Receipt replay duplicated stock: %',v_qty; END IF;
+
+    -- Over-receipt must roll back without changing the received quantity or stock.
+    BEGIN
+      PERFORM public.process_purchase_receipt(
+        v_store,'60000000-0000-4000-8000-000000000006',
+        jsonb_build_object('id','72000000-0000-4000-8000-000000000004','purchase_id',v_purchase,
+          'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',4)))
+      );
+      RAISE EXCEPTION 'Over-receipt unexpectedly succeeded';
+    EXCEPTION WHEN check_violation THEN
+      NULL;
+    END;
+
+    PERFORM public.process_purchase_receipt(
+      v_store,'60000000-0000-4000-8000-000000000007',
+      jsonb_build_object('id','72000000-0000-4000-8000-000000000005','purchase_id',v_purchase,
+        'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3)))
+    );
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
+    SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
+    IF v_qty IS DISTINCT FROM 10 OR v_received IS DISTINCT FROM 10 OR v_status IS DISTINCT FROM 'COMPLETE' THEN
+      RAISE EXCEPTION 'Final receipt mismatch: stock %, received %, status %',v_qty,v_received,v_status;
+    END IF;
+    RAISE NOTICE 'PASS: partial receiving, idempotent receipt replay, over-receipt rejection, final completion';
+END
+$partial_receipt_test$;
