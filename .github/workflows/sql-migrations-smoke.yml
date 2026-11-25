@@ -111,6 +111,14 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-sync-regression.sql"
+      - name: Apply Phase 3 sync Push hardening
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE3_SYNC_PUSH_HARDENING.sql"
+      - name: Run Phase 3 sync Push regression tests
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-sync-push-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
