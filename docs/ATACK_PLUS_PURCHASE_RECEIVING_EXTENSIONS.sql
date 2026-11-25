@@ -198,8 +198,8 @@ BEGIN
   WHERE id=v_purchase AND store_id=p_store_id AND status<>'CANCELLED' FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'Purchase not found or cancelled'; END IF;
  v_approver:=NULLIF(p_payload->>'approved_by','')::UUID;
- INSERT INTO public.purchase_receipts(store_id,purchase_id,receipt_number,operation_id,received_by,approved_by,notes)
- VALUES(p_store_id,v_purchase,'RCV-'||v_receipt::text,p_operation_id,v_user,v_approver,p_payload->>'notes');
+ INSERT INTO public.purchase_receipts(id,store_id,purchase_id,receipt_number,operation_id,received_by,approved_by,notes)
+ VALUES(v_receipt,p_store_id,v_purchase,'RCV-'||v_receipt::text,p_operation_id,v_user,v_approver,p_payload->>'notes');
 
  FOR v_row IN SELECT e.value FROM jsonb_array_elements(p_payload->'items') e(value)
               ORDER BY e.value->>'purchase_item_id'
