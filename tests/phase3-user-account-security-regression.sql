@@ -1,6 +1,7 @@
 -- Controlled user profile creation/update security regressions.
 INSERT INTO auth.users(id)
-VALUES ('20000000-0000-4000-8000-000000000009')
+VALUES ('20000000-0000-4000-8000-000000000009'),
+       ('20000000-0000-4000-8000-000000000010')
 ON CONFLICT (id) DO NOTHING;
 
 DO $user_acl$
@@ -52,7 +53,7 @@ BEGIN
   denied:=FALSE;
   BEGIN
     PERFORM public.create_store_user_profile(
-      '20000000-0000-4000-8000-000000000010',
+      '20000000-0000-4000-8000-000000000011',
       'invalid_auth_user','Invalid Auth User','cashier',NULL,NULL
     );
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
