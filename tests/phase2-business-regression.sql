@@ -493,3 +493,109 @@ BEGIN
  RAISE NOTICE 'PASS: post-receipt amendment, atomic financial adjustment, immutable receipt quantity, audit snapshots and reduction guard';
 END
 $purchase_amendment_test$;
+
+-- D-016/D-021: stock adjustment permission, negative-stock exception, weighted cost
+-- and balanced debit/credit journal entries.
+DO $stock_adjustment_regression$
+DECLARE
+ v_store UUID:='10000000-0000-4000-8000-000000000001';
+ v_owner_auth UUID:='20000000-0000-4000-8000-000000000001';
+ v_owner UUID:='30000000-0000-4000-8000-000000000001';
+ v_cashier_auth UUID:='20000000-0000-4000-8000-000000000002';
+ v_cashier UUID:='30000000-0000-4000-8000-000000000002';
+ v_product UUID:='50000000-0000-4000-8000-000000000008';
+ v_result JSONB; v_qty NUMERIC(18,4); v_cost NUMERIC(18,4);
+ v_debit NUMERIC(18,4); v_credit NUMERIC(18,4); v_total NUMERIC(18,4);
+ v_journal UUID; v_count INTEGER;
+BEGIN
+ PERFORM set_config('request.jwt.claim.sub',v_owner_auth::text,TRUE);
+ INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
+ VALUES(v_product,v_store,'Stock Adjustment Test','pcs',15,TRUE);
+ INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
+ VALUES(v_product,'main',5,0);
+
+ -- Increase: weighted average cost and balanced Inventory debit / Gain credit.
+ v_result:=public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000024',
+  jsonb_build_object('id','76000000-0000-4000-8000-000000000008',
+   'adjustment_number','ADJ-PH2-001','product_id',v_product,'adjustment_type','INCREASE',
+   'reason','Initial count correction','quantity',2,'unit_id','pcs','cost_per_unit',20));
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
+ SELECT id,total_debit,total_credit INTO v_journal,v_debit,v_credit
+  FROM public.journal_entries WHERE source_id='76000000-0000-4000-8000-000000000008';
+ SELECT count(*) INTO v_count FROM public.general_ledger WHERE journal_entry_id=v_journal;
+ IF v_qty IS DISTINCT FROM 7 OR v_cost IS DISTINCT FROM 16.4286
+    OR v_debit IS DISTINCT FROM 40 OR v_credit IS DISTINCT FROM 40 OR v_count<>2 THEN
+  RAISE EXCEPTION 'Increase adjustment mismatch: stock %, cost %, journal debit/credit %, %, lines %',
+    v_qty,v_cost,v_debit,v_credit,v_count;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.general_ledger gl JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+    WHERE gl.journal_entry_id=v_journal AND gl.entry_type='DEBIT' AND coa.account_code='1200')
+    OR NOT EXISTS(SELECT 1 FROM public.general_ledger gl JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+    WHERE gl.journal_entry_id=v_journal AND gl.entry_type='CREDIT' AND coa.account_code='4100') THEN
+  RAISE EXCEPTION 'Increase journal accounts are not balanced by direction';
+ END IF;
+
+ -- Decrease uses the current weighted average, not caller-supplied cost.
+ v_result:=public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000025',
+  jsonb_build_object('id','76000000-0000-4000-8000-000000000009',
+   'adjustment_number','ADJ-PH2-002','product_id',v_product,'adjustment_type','DECREASE',
+   'reason','Damaged stock write-off','quantity',3,'unit_id','pcs','cost_per_unit',999));
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ SELECT total_value INTO v_total FROM public.stock_adjustments WHERE id='76000000-0000-4000-8000-000000000009';
+ SELECT id,total_debit,total_credit INTO v_journal,v_debit,v_credit
+  FROM public.journal_entries WHERE source_id='76000000-0000-4000-8000-000000000009';
+ IF v_qty IS DISTINCT FROM 4 OR v_total IS DISTINCT FROM 49.2858
+    OR v_debit IS DISTINCT FROM v_credit OR v_debit IS DISTINCT FROM 49.2858 THEN
+  RAISE EXCEPTION 'Decrease adjustment mismatch: stock %, value %, journal %, %',v_qty,v_total,v_debit,v_credit;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.general_ledger gl JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+    WHERE gl.journal_entry_id=v_journal AND gl.entry_type='DEBIT' AND coa.account_code='5100')
+    OR NOT EXISTS(SELECT 1 FROM public.general_ledger gl JOIN public.chart_of_accounts coa ON coa.id=gl.account_id
+    WHERE gl.journal_entry_id=v_journal AND gl.entry_type='CREDIT' AND coa.account_code='1200') THEN
+  RAISE EXCEPTION 'Decrease journal accounts are not balanced by direction';
+ END IF;
+
+ -- Same operation replay must not duplicate the adjustment or journal.
+ v_result:=public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000025',
+  jsonb_build_object('id','76000000-0000-4000-8000-000000000009',
+   'adjustment_number','ADJ-PH2-002','product_id',v_product,'adjustment_type','DECREASE',
+   'reason','Damaged stock write-off','quantity',3,'unit_id','pcs','cost_per_unit',999));
+ IF (v_result->>'replayed')::boolean IS DISTINCT FROM TRUE
+    OR (SELECT count(*) FROM public.journal_entries WHERE source_id='76000000-0000-4000-8000-000000000009')<>1 THEN
+  RAISE EXCEPTION 'Stock adjustment idempotency failed';
+ END IF;
+
+ -- Cashier receives adjustment permission but not negative-stock permission.
+ INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
+ VALUES(v_cashier,v_cashier_auth,v_store,'phase2_cashier','Phase 2 Cashier',TRUE);
+ INSERT INTO public.user_roles(user_id,role_id) VALUES(v_cashier,'cashier');
+ INSERT INTO public.role_permissions(role_id,permission_id)
+ SELECT 'cashier',id FROM public.permissions WHERE code='inventory.adjust'
+ ON CONFLICT(role_id,permission_id) DO NOTHING;
+ PERFORM set_config('request.jwt.claim.sub',v_cashier_auth::text,TRUE);
+ BEGIN
+  PERFORM public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000026',
+   jsonb_build_object('id','76000000-0000-4000-8000-000000000010',
+    'adjustment_number','ADJ-PH2-003','product_id',v_product,'adjustment_type','DECREASE',
+    'reason','Unauthorized negative stock attempt','quantity',6,'unit_id','pcs'));
+  RAISE EXCEPTION 'Unauthorized negative stock adjustment unexpectedly succeeded';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ IF v_qty IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'Denied negative adjustment changed stock: %',v_qty; END IF;
+
+ -- Owner with inventory.allow_negative can proceed, and the exception is audited.
+ PERFORM set_config('request.jwt.claim.sub',v_owner_auth::text,TRUE);
+ v_result:=public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000027',
+  jsonb_build_object('id','76000000-0000-4000-8000-000000000011',
+   'adjustment_number','ADJ-PH2-004','product_id',v_product,'adjustment_type','DECREASE',
+   'reason','Approved negative stock test','quantity',6,'unit_id','pcs'));
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ IF v_qty IS DISTINCT FROM -2 OR NOT EXISTS(SELECT 1 FROM public.audit_logs
+    WHERE entity_id='76000000-0000-4000-8000-000000000011' AND action='NEGATIVE_STOCK') THEN
+  RAISE EXCEPTION 'Authorized negative stock or audit mismatch: %',v_qty;
+ END IF;
+ RAISE NOTICE 'PASS: inventory.adjust permission, negative-stock special permission, weighted adjustment cost and balanced journal entries';
+END
+$stock_adjustment_regression$;
