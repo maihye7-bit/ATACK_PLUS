@@ -9,7 +9,7 @@ DECLARE
  v_customer UUID:='90000000-0000-4000-8000-000000000002';
  v_result JSONB;
  v_debit NUMERIC(18,4); v_credit NUMERIC(18,4);
- v_count INTEGER; v_journal UUID; v_proc TEXT;
+ v_count INTEGER; v_journal UUID; v_proc TEXT; v_error TEXT;
 BEGIN
  PERFORM set_config('request.jwt.claim.sub',v_auth::text,TRUE);
 
@@ -247,8 +247,9 @@ BEGIN
      FROM public.chart_of_accounts WHERE store_id=v_store AND account_code='1200';
    SET CONSTRAINTS trg_validate_journal_header_balance,trg_validate_general_ledger_balance IMMEDIATE;
    RAISE EXCEPTION 'Unbalanced journal was unexpectedly accepted';
- EXCEPTION WHEN check_violation THEN
-   NULL;
+ EXCEPTION WHEN SQLSTATE '23514' THEN
+   GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+   IF v_error NOT LIKE 'Unbalanced journal %: lines debit %' THEN RAISE; END IF;
  END;
 
  -- View execution must honor authenticated RLS and expose only the caller's store.
