@@ -387,7 +387,7 @@ SELLER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest
 SELLER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 SELLER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 [[ "$(jq 'length' <<<"${SELLER_INVOICES}")" -eq 1 ]] || { echo "Seller can read another seller's invoice or cannot read their own"; exit 1; }
-[[ "$(jq -e --arg id "a5000000-0000-4000-8000-000000000009" 'any(.[]; .id==$id)' <<<"${SELLER_INVOICES}")" == "false" ]] || { echo "Seller can read the owner's private invoice"; exit 1; }
+[[ "$(jq -r --arg id "a5000000-0000-4000-8000-000000000009" 'any(.[]; .id==$id)' <<<"${SELLER_INVOICES}")" == "false" ]] || { echo "Seller can read the owner's private invoice"; exit 1; }
 [[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${SELLER_INVOICES}")" == "true" ]] || { echo "Seller sale invoice is not attributed to the authenticated seller"; exit 1; }
 [[ "$(jq 'length' <<<"${SELLER_PURCHASES}")" -eq 0 ]] || { echo "Seller read purchases without purchases.read"; exit 1; }
 [[ "$(jq 'length' <<<"${SELLER_JOURNALS}")" -eq 0 ]] || { echo "Seller read financial journals without reports.financial"; exit 1; }
