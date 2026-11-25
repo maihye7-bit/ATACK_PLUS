@@ -12,7 +12,10 @@ ALTER TABLE public.purchase_returns
 
 ALTER TABLE public.purchase_amendments
   ADD COLUMN IF NOT EXISTS debt_reduction NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(debt_reduction>=0),
-  ADD COLUMN IF NOT EXISTS supplier_credit_created NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(supplier_credit_created>=0);
+  ADD COLUMN IF NOT EXISTS supplier_credit_created NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(supplier_credit_created>=0),
+  ADD COLUMN IF NOT EXISTS inventory_cost_delta NUMERIC(18,4) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS cogs_cost_delta NUMERIC(18,4) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS transit_cost_delta NUMERIC(18,4) NOT NULL DEFAULT 0;
 ALTER TABLE public.purchase_closures
   ADD COLUMN IF NOT EXISTS financial_delta NUMERIC(18,4) NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS applied_to_debt NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(applied_to_debt>=0),
@@ -613,44 +616,30 @@ SET search_path=pg_catalog,extensions,public,pg_temp
 AS $purchase_amendment_accounting$
 DECLARE
  v_result JSONB; v_id UUID:=(p_payload->>'id')::UUID;
- v_purchase UUID; v_user UUID; v_old JSONB; v_new JSONB; v_old_row JSONB; v_row JSONB;
- v_item UUID; v_old_qty NUMERIC(18,4); v_old_price NUMERIC(18,4); v_old_cost NUMERIC(18,4);
- v_new_qty NUMERIC(18,4); v_new_price NUMERIC(18,4); v_new_cost NUMERIC(18,4);
- v_received NUMERIC(18,4); v_closed NUMERIC(18,4);
- v_received_delta NUMERIC(18,4):=0; v_transit_delta NUMERIC(18,4):=0;
+ v_purchase UUID; v_user UUID;
+ v_inventory_delta NUMERIC(18,4); v_cogs_delta NUMERIC(18,4); v_transit_delta NUMERIC(18,4);
  v_delta NUMERIC(18,4); v_debt_reduction NUMERIC(18,4); v_supplier_credit NUMERIC(18,4);
  v_variance NUMERIC(18,4); v_lines JSONB:='[]'::JSONB;
 BEGIN
  v_result:=public.process_purchase_amendment_pre_accounting(p_store_id,p_operation_id,p_payload);
  IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
- SELECT purchase_id,changed_by,old_values_json,new_values_json,debt_reduction,supplier_credit_created
-   INTO v_purchase,v_user,v_old,v_new,v_debt_reduction,v_supplier_credit
+ SELECT purchase_id,changed_by,debt_reduction,supplier_credit_created,
+        inventory_cost_delta,cogs_cost_delta,transit_cost_delta
+   INTO v_purchase,v_user,v_debt_reduction,v_supplier_credit,
+        v_inventory_delta,v_cogs_delta,v_transit_delta
    FROM public.purchase_amendments WHERE id=v_id AND store_id=p_store_id;
  v_delta:=(v_result->>'financial_delta')::NUMERIC;
- FOR v_row IN SELECT value FROM jsonb_array_elements(v_new)
- LOOP
-   v_item:=(v_row->>'purchase_item_id')::UUID;
-   SELECT value INTO v_old_row FROM jsonb_array_elements(v_old)
-    WHERE value->>'purchase_item_id'=v_item::TEXT;
-   v_old_qty:=(v_old_row->>'quantity')::NUMERIC;
-   v_old_price:=(v_old_row->>'unit_price')::NUMERIC;
-   v_old_cost:=(v_old_row->>'cost_per_unit')::NUMERIC;
-   v_new_qty:=(v_row->>'quantity')::NUMERIC;
-   v_new_price:=(v_row->>'unit_price')::NUMERIC;
-   v_new_cost:=(v_row->>'cost_per_unit')::NUMERIC;
-   v_received:=(v_row->>'received_quantity')::NUMERIC;
-   v_closed:=(v_row->>'closed_quantity')::NUMERIC;
-   v_received_delta:=v_received_delta+(v_received*(v_new_cost-v_old_cost));
-   v_transit_delta:=v_transit_delta+
-     ((v_new_qty-v_received-v_closed)*v_new_cost)-
-     ((v_old_qty-v_received-v_closed)*v_old_cost);
- END LOOP;
- v_variance:=v_received_delta+v_transit_delta-v_delta;
+ v_variance:=v_inventory_delta+v_cogs_delta+v_transit_delta-v_delta;
 
- IF v_received_delta>0 THEN
-   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_received_delta,'description','Amended received inventory value'));
- ELSIF v_received_delta<0 THEN
-   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','CREDIT','amount',-v_received_delta,'description','Amended received inventory value'));
+ IF v_inventory_delta>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','DEBIT','amount',v_inventory_delta,'description','Amended received inventory value'));
+ ELSIF v_inventory_delta<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1200','entry_type','CREDIT','amount',-v_inventory_delta,'description','Amended received inventory value'));
+ END IF;
+ IF v_cogs_delta>0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5000','entry_type','DEBIT','amount',v_cogs_delta,'description','Amendment adjustment to consumed goods cost'));
+ ELSIF v_cogs_delta<0 THEN
+   v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','5000','entry_type','CREDIT','amount',-v_cogs_delta,'description','Amendment adjustment to consumed goods cost'));
  END IF;
  IF v_transit_delta>0 THEN
    v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','1210','entry_type','DEBIT','amount',v_transit_delta,'description','Amended goods-in-transit value'));
