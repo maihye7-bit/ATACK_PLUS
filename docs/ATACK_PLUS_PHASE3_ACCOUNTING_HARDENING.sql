@@ -428,7 +428,6 @@ SET search_path=pg_catalog,extensions,public,pg_temp
 AS $sale_return_accounting$
 DECLARE
  v_result JSONB; v_id UUID:=(p_payload->>'id')::UUID; v_user UUID;
- v_customer UUID; v_old_debt NUMERIC(18,4):=0; v_old_credit NUMERIC(18,4):=0;
  v_total NUMERIC(18,4); v_applied NUMERIC(18,4); v_credit NUMERIC(18,4);
  v_inventory NUMERIC(18,4); v_lines JSONB:='[]'::JSONB;
 BEGIN
@@ -448,40 +447,18 @@ BEGIN
     END IF;
   END IF;
 
- -- Capture the customer's balances before the legacy return RPC mutates debt.
- -- The return is first applied to outstanding receivables; any remainder is
- -- carried as customer credit, never left as a negative receivable.
- SELECT i.customer_id,COALESCE(c.current_debt,0),COALESCE(c.credit_balance,0)
-   INTO v_customer,v_old_debt,v_old_credit
-   FROM public.invoices i
-   LEFT JOIN public.customers c ON c.id=i.customer_id AND c.store_id=i.store_id
-  WHERE i.id=(p_payload->>'invoice_id')::UUID AND i.store_id=p_store_id;
- IF NOT FOUND THEN RAISE EXCEPTION 'Original sale invoice not found for accounting'; END IF;
-
+ -- The pre-accounting RPC locks and updates the customer row atomically.
+ -- Read its persisted allocation result only after it completes: taking a
+ -- pre-call balance snapshot here can overwrite another concurrent return's
+ -- debt/credit update with stale values.
  v_result:=public.process_sale_return_pre_accounting(p_store_id,p_operation_id,p_payload);
  IF COALESCE((v_result->>'replayed')::BOOLEAN,FALSE) THEN RETURN v_result; END IF;
- SELECT created_by,total_amount
-   INTO v_user,v_total
+ SELECT created_by,total_amount,applied_to_debt,customer_credit_created
+   INTO v_user,v_total,v_applied,v_credit
    FROM public.sales_returns WHERE id=v_id AND store_id=p_store_id;
  IF NOT FOUND THEN RAISE EXCEPTION 'Sales return missing after successful RPC'; END IF;
-
- IF v_customer IS NOT NULL THEN
-   v_applied:=LEAST(v_total,GREATEST(v_old_debt,0));
-   v_credit:=v_total-v_applied;
-   UPDATE public.customers
-      SET current_debt=v_old_debt-v_applied,
-          credit_balance=v_old_credit+v_credit
-    WHERE id=v_customer AND store_id=p_store_id;
-   UPDATE public.sales_returns
-      SET applied_to_debt=v_applied,customer_credit_created=v_credit
-    WHERE id=v_id AND store_id=p_store_id;
-   UPDATE public.customer_ledgers
-      SET balance=v_old_debt-v_applied
-    WHERE reference_id=v_id AND customer_id=v_customer AND type='RETURN';
- ELSE
-   v_applied:=0;
-   v_credit:=0;
- END IF;
+ v_applied:=COALESCE(v_applied,0);
+ v_credit:=COALESCE(v_credit,0);
  IF v_total>0 THEN
    v_lines:=v_lines||jsonb_build_array(jsonb_build_object('account_code','4010','entry_type','DEBIT','amount',v_total,'description','Sales return'));
  END IF;
