@@ -462,7 +462,7 @@ SELLER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/
 # Seller access must not expose owner-managed purchasing, supplier, inventory-control or accounting data.
 SELLER_OWNER_ONLY_TABLES=(
   suppliers supplier_ledger supplier_payments purchase_returns purchase_return_items
-  stock_adjustments inventory_batches purchase_receipts purchase_receipt_items
+  stock_adjustments stock_movements inventory_batches stock_alerts purchase_receipts purchase_receipt_items
   purchase_closures purchase_closure_items purchase_amendments chart_of_accounts
   general_ledger expenses revenues devices user_roles
 )
