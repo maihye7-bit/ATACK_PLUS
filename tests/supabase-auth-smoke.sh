@@ -460,7 +460,8 @@ SELLER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/
 SELLER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 SELLER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 SELLER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
-[[ "$(jq 'length' <<<"${SELLER_INVOICES}")" -eq 2 ]] || { echo "Seller must see exactly their two sales invoices; received: ${SELLER_INVOICES}"; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_INVOICES}")" -eq 3 ]] || { echo "Seller must see exactly their three own sales invoices; received: ${SELLER_INVOICES}"; exit 1; }
+[[ "$(jq -e --arg id "a5000000-0000-4000-8000-000000000017" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${SELLER_INVOICES}")" == "true" ]] || { echo "Seller cannot see the invoice used for seller-specific payment allocation"; exit 1; }
 [[ "$(jq -r --arg id "a5000000-0000-4000-8000-000000000009" 'any(.[]; .id==$id)' <<<"${SELLER_INVOICES}")" == "false" ]] || { echo "Seller can read the owner's private invoice"; exit 1; }
 [[ "$(jq -e --arg id "${SALE_ID}" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${SELLER_INVOICES}")" == "true" ]] || { echo "Seller sale invoice is not attributed to the authenticated seller"; exit 1; }
 [[ "$(jq -e --arg id "${CUSTOMER_SALE_ID}" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${SELLER_INVOICES}")" == "true" ]] || { echo "Seller customer invoice is not attributed to the authenticated seller"; exit 1; }
