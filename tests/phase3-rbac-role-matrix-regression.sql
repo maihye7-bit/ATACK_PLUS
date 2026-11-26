@@ -57,13 +57,13 @@ BEGIN
   IF NOT public.has_store_permission('10000000-0000-4000-8000-000000000001','reports.financial')
      OR NOT public.has_store_permission('10000000-0000-4000-8000-000000000001','customers.payments')
      OR NOT public.has_store_permission('10000000-0000-4000-8000-000000000001','suppliers.payments')
-     OR NOT public.has_store_permission('10000000-0000-4000-8000/000000000001','sales.read')
-     OR NOT public.has_store_permission('10000000-0000-4000-8000/000000000001','purchases.read')
-     OR public.has_store_permission('10000000-0000-4000-8000/000000000001','sales.write')
-     OR public.has_store_permission('10000000-0000-4000-8000/000000000001','purchases.write')
-     OR public.has_store_permission('10000000-0000-4000-8000/000000000001','purchases.return')
-     OR public.has_store_permission('10000000-0000-4000-8000/000000000001','inventory.adjust')
-     OR public.has_store_permission('10000000-0000-4000-8000/000000000001','audit.read') THEN
+     OR NOT public.has_store_permission('10000000-0000-4000-8000-000000000001','sales.read')
+     OR NOT public.has_store_permission('10000000-0000-4000-8000-000000000001','purchases.read')
+     OR public.has_store_permission('10000000-0000-4000-8000-000000000001','sales.write')
+     OR public.has_store_permission('10000000-0000-4000-8000-000000000001','purchases.write')
+     OR public.has_store_permission('10000000-0000-4000-8000-000000000001','purchases.return')
+     OR public.has_store_permission('10000000-0000-4000-8000-000000000001','inventory.adjust')
+     OR public.has_store_permission('10000000-0000-4000-8000-000000000001','audit.read') THEN
     RAISE EXCEPTION 'Accountant permission boundary does not match the approved matrix';
   END IF;
 
