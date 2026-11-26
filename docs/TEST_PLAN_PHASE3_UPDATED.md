@@ -592,3 +592,29 @@ The return regression also validates that accounting allocation is read from the
 The first CI attempt exposed a fixture collision in generated adjustment numbers (the RPC derives its default number from the first eight UUID characters). The test was corrected to supply distinct explicit adjustment numbers. The final SQL workflow run passed, including both concurrency scenarios; the Supabase Auth integration workflow for the same test revision also passed.
 
 Scope note: these results verify the two concurrency scenarios above in CI. They do not constitute staging or production acceptance, nor do they mark every Phase 3 test-plan item as executed.
+
+
+## 15. Verified RBAC Role Matrix and Admin Escalation Boundary (2026-11-26)
+
+Executed by `tests/phase3-rbac-role-matrix-regression.sql` after all Phase 3 security migrations in the isolated PostgreSQL 16 CI database.
+
+| Role | Verified boundary |
+|---|---|
+| Owner / Super Admin | Has `settings.write`, `audit.read`, `purchases.return`, `inventory.adjust` and `inventory.allow_negative` |
+| Admin | Has privileged purchase/inventory operations and `users.manage`, but lacks `settings.write` and owner-only `audit.read` |
+| Accountant | Has financial reporting and customer/supplier payment permissions; lacks sales/purchase mutation, purchase-return, inventory-adjustment and audit permissions |
+| Seller (`cashier` database key) | Can sell, receive customer payments and read sales-required inventory/report data; cannot manage purchases, suppliers, stock writes/adjustments, financial reports, users or audit records |
+| Stock keeper | Can manage products, routine inventory writes and purchase receiving; lacks privileged stock adjustment, purchase return, financial, sales and audit permissions |
+
+The regression also verifies that an admin can delegate a role whose complete permission set is within the admin's own permissions, but cannot grant the full `owner` role. The denied escalation leaves no owner-role assignment behind.
+
+The stale Phase 3 security document was reconciled with the executable permission catalog. In particular, it now distinguishes `inventory.write` from `inventory.adjust`, documents `reports.inventory` and `reports.financial`, and removes references to unused permission codes `reports.view`, `accounting.view` and `accounting.create`.
+
+| CI workflow | Run | Result |
+|---|---:|---|
+| SQL migration smoke test | 45905700046 | PASS |
+| Supabase Auth integration smoke test | 45905699770 | PASS |
+
+The SQL workflow also passed the existing concurrency, RLS, security-catalog, audit, user-role/device, user-account and read-RBAC regressions. The Supabase workflow passed with real local Supabase Auth identities and PostgREST requests.
+
+Scope note: this verifies the role matrix and tested authorization boundaries in CI. It does not constitute production/staging acceptance or mark the complete Stage 7 security gate as finished.
