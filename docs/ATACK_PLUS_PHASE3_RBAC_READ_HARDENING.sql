@@ -174,6 +174,79 @@ BEGIN
       )
     );
 
+  -- Seller-specific financial activity: a seller can read only payment and
+  -- ledger rows created by that seller; the owner retains store-wide visibility.
+  DROP POLICY IF EXISTS rbac_read_customer_ledgers ON public.customer_ledgers;
+  CREATE POLICY rbac_read_customer_ledgers ON public.customer_ledgers
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (
+      public.has_store_permission(public.current_user_store_id(),'customers.payments')
+      AND (
+        public.has_store_permission(public.current_user_store_id(),'users.manage')
+        OR created_by = (
+          SELECT u.id FROM public.users u
+           WHERE u.auth_user_id=auth.uid()
+             AND u.store_id=public.current_user_store_id()
+             AND u.is_active=TRUE
+           LIMIT 1
+        )
+      )
+    );
+
+  DROP POLICY IF EXISTS rbac_read_customer_payments ON public.customer_payments;
+  CREATE POLICY rbac_read_customer_payments ON public.customer_payments
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (
+      public.has_store_permission(public.current_user_store_id(),'customers.payments')
+      AND (
+        public.has_store_permission(public.current_user_store_id(),'users.manage')
+        OR created_by = (
+          SELECT u.id FROM public.users u
+           WHERE u.auth_user_id=auth.uid()
+             AND u.store_id=public.current_user_store_id()
+             AND u.is_active=TRUE
+           LIMIT 1
+        )
+      )
+    );
+
+  -- An individual seller sees only allocations from their own receipts to
+  -- their own invoices. This avoids exposing another seller's invoice/payment
+  -- relationship through the allocation table.
+  DROP POLICY IF EXISTS rbac_read_payment_allocations ON public.payment_allocations;
+  CREATE POLICY rbac_read_payment_allocations ON public.payment_allocations
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (
+      EXISTS (
+        SELECT 1
+          FROM public.customer_payments cp
+          JOIN public.customers c ON c.id=cp.customer_id
+          JOIN public.invoices i ON i.id=payment_allocations.invoice_id
+         WHERE cp.id=payment_allocations.payment_id
+           AND i.customer_id=cp.customer_id
+           AND i.store_id=c.store_id
+           AND c.store_id=public.current_user_store_id()
+           AND public.has_store_permission(c.store_id,'customers.payments')
+           AND (
+             public.has_store_permission(c.store_id,'users.manage')
+             OR (
+               cp.created_by = (
+                 SELECT u.id FROM public.users u
+                  WHERE u.auth_user_id=auth.uid()
+                    AND u.store_id=c.store_id AND u.is_active=TRUE
+                  LIMIT 1
+               )
+               AND i.created_by = (
+                 SELECT u.id FROM public.users u
+                  WHERE u.auth_user_id=auth.uid()
+                    AND u.store_id=c.store_id AND u.is_active=TRUE
+                  LIMIT 1
+               )
+             )
+           )
+      )
+    );
+
 END
 $rbac_read_policies$;
 
