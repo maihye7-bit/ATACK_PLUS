@@ -100,7 +100,7 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: bash tests/phase2-concurrency.sh
-      # Exercises synchronized concurrent returns and stock-adjustment accounting.
+      # Exercises synchronized concurrent returns and stock-adjustment accounting (latest fixture IDs).
       - name: Run concurrent returns and stock adjustment regression
         env:
           PGPASSWORD: postgres
