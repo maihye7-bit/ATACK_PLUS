@@ -203,3 +203,17 @@ Workflow run: `45582736861` — النتيجة: `success` — PostgreSQL `16.16`
 - تطبيق أي Migration على قاعدة staging أو production الفعلية.
 
 لا تُحوّل حالات `NOT RUN` أعلاه إلى `PASS` اعتماداً على نجاح workflow الحالي.
+
+
+## 11. Additional concurrency regressions — 2026-11-26
+
+The automated PostgreSQL concurrency script now also verifies:
+
+| ID | Scenario | Verified invariant |
+|---|---|---|
+| RPC-CONC-02 | Two simultaneous sales compete for the final stock unit | Exactly one sale commits; the rejected sale leaves no invoice, stock movement, journal entry, or processed-operation residue. |
+| RPC-CONC-03 | Two simultaneous customer payments (30 + 40 DZD) against one 100 DZD invoice | Both payments commit; customer debt and invoice remaining are 30 DZD; allocations total 70 DZD; both payment journals and operation records exist exactly once. |
+
+**Execution evidence:** GitHub Actions SQL migration smoke test run `45903805852`, commit `3a7f06b1758fb50749dcd26c32d497628ec14c17`, PostgreSQL 16.16 — **PASS**.
+
+This does not replace real multi-device offline/replay tests or acceptance against a separately managed Supabase staging project.
