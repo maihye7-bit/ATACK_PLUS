@@ -522,6 +522,13 @@ BEGIN
             IF v_part<=0 THEN RAISE EXCEPTION 'Allocation amount must be positive'; END IF;
             PERFORM 1 FROM public.invoices WHERE id=v_invoice AND store_id=p_store_id AND customer_id=v_customer AND type='SALE' AND status<>'CANCELLED' FOR UPDATE;
             IF NOT FOUND THEN RAISE EXCEPTION 'Allocated invoice is not an open sale invoice for this customer'; END IF;
+            IF NOT public.has_store_permission(p_store_id,'users.manage')
+               AND NOT EXISTS (
+                 SELECT 1 FROM public.invoices i
+                  WHERE i.id=v_invoice AND i.store_id=p_store_id AND i.created_by=v_user
+               ) THEN
+                RAISE EXCEPTION 'Seller cannot allocate a customer payment to another seller''s invoice';
+            END IF;
             IF v_part>(SELECT remaining_amount FROM public.invoices WHERE id=v_invoice) THEN RAISE EXCEPTION 'Allocation exceeds invoice remaining amount'; END IF;
             v_alloc:=v_alloc+v_part;
         END LOOP;
@@ -545,6 +552,7 @@ BEGIN
         SELECT i.id,i.remaining_amount FROM public.invoices i
          WHERE i.store_id=p_store_id AND i.customer_id=v_customer AND i.type='SALE'
            AND i.status IN ('OPEN','PARTIAL') AND i.remaining_amount>0
+           AND (public.has_store_permission(p_store_id,'users.manage') OR i.created_by=v_user)
            AND NOT EXISTS (SELECT 1 FROM public.payment_allocations pa
                             WHERE pa.payment_id=v_payment AND pa.invoice_id=i.id)
          ORDER BY i.invoice_date,i.id FOR UPDATE OF i
