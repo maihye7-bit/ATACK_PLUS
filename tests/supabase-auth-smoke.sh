@@ -344,8 +344,8 @@ SELLER_PAYMENT_ALLOCATIONS="$(curl --fail-with-body --silent --show-error "${API
 OWNER_PAYMENT_ALLOCATIONS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/payment_allocations?select=payment_id,invoice_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 [[ "$(jq 'length' <<<"${SELLER_CUSTOMER_PAYMENTS}")" -eq 2 && "$(jq -e --arg owner "a5000000-0000-4000-8000-000000000014" 'all(.[]; .id!=$owner)' <<<"${SELLER_CUSTOMER_PAYMENTS}")" == "true" ]] || { echo "Seller can see owner customer payments: ${SELLER_CUSTOMER_PAYMENTS}" >&2; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_CUSTOMER_PAYMENTS}")" -eq 3 ]] || { echo "Owner cannot see all customer payments: ${OWNER_CUSTOMER_PAYMENTS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${SELLER_CUSTOMER_LEDGERS}")" -eq 4 && "$(jq -e --arg owner "a3000000-0000-4000-8000-000000000001" 'all(.[]; .created_by!=$owner)' <<<"${SELLER_CUSTOMER_LEDGERS}")" == "true" ]] || { echo "Seller can see owner customer ledger rows: ${SELLER_CUSTOMER_LEDGERS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${OWNER_CUSTOMER_LEDGERS}")" -eq 5 ]] || { echo "Owner cannot see all customer ledger rows: ${OWNER_CUSTOMER_LEDGERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_CUSTOMER_LEDGERS}")" -eq 5 && "$(jq -e --arg owner "a3000000-0000-4000-8000-000000000001" 'all(.[]; .created_by!=$owner)' <<<"${SELLER_CUSTOMER_LEDGERS}")" == "true" ]] || { echo "Seller can see owner customer ledger rows: ${SELLER_CUSTOMER_LEDGERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_CUSTOMER_LEDGERS}")" -eq 6 ]] || { echo "Owner cannot see all customer ledger rows: ${OWNER_CUSTOMER_LEDGERS}" >&2; exit 1; }
 [[ "$(jq 'length' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" -eq 2 && "$(jq -e --arg owner_invoice "a5000000-0000-4000-8000-000000000009" 'all(.[]; .invoice_id!=$owner_invoice)' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" == "true" ]] || { echo "Seller can see a foreign payment allocation or cannot see own allocations: ${SELLER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_PAYMENT_ALLOCATIONS}")" -eq 3 ]] || { echo "Owner cannot see all customer payment allocations: ${OWNER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
 
