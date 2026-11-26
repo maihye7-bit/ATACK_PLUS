@@ -67,7 +67,7 @@ SQL
 # Two concurrent sale transactions contend for the final available unit.
 # Exactly one sale may commit; the rejected transaction must leave no invoice,
 # stock movement, journal entry, or processed-operation residue.
-"\${PSQL[@]}" <<'SQL'
+"${PSQL[@]}" <<'SQL'
 INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
 VALUES ('50000000-0000-4000-8000-000000000010',
         '10000000-0000-4000-8000-000000000001',
@@ -84,7 +84,7 @@ run_last_unit_sale() {
   local invoice_id="$2"
   local invoice_number="$3"
   local output="$4"
-  if "\${PSQL[@]}" >"$output.log" 2>&1 <<SQL
+  if "${PSQL[@]}" >"$output.log" 2>&1 <<SQL
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',false);
 SELECT public.process_sale_invoice(
  '10000000-0000-4000-8000-000000000001',
@@ -133,7 +133,7 @@ else
   exit 1
 fi
 
-"\${PSQL[@]}" <<'SQL'
+"${PSQL[@]}" <<'SQL'
 DO $last_unit_sale_check$
 DECLARE
   v_stock NUMERIC(18,4);
