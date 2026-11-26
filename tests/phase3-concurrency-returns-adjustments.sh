@@ -54,7 +54,7 @@ SET application_name='atack-return-mutex-holder';
 BEGIN;
 SELECT 1 FROM public.store_sync_counters
  WHERE store_id='10000000-0000-4000-8000-000000000001' FOR UPDATE;
-SELECT pg_sleep(8);
+SELECT pg_sleep(12);
 COMMIT;
 SQL
 ) >"$tmpdir/holder.log" 2>&1 &
@@ -94,6 +94,22 @@ run_sale_return '60000000-0000-4000-8000-000000000054' \
  '91000000-0000-4000-8000-000000000052' \
  '80000000-0000-4000-8000-000000000052' "$item_b" 'PH3-RET-B' "$tmpdir/return-b" &
 ret_b=$!
+
+waiters=0
+for _ in $(seq 1 80); do
+  waiters="$("${PSQL[@]}" -Atc "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query ILIKE '%process_sale_return%'")"
+  [[ "$waiters" -ge 2 ]] && break
+  sleep 0.1
+done
+if [[ "$waiters" -lt 2 ]]; then
+  echo "Both sale-return RPCs did not reach the held store mutex concurrently."
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  wait "$ret_a" || true
+  wait "$ret_b" || true
+  cat "$tmpdir/return-a.log" "$tmpdir/return-b.log"
+  exit 1
+fi
 
 wait "$ret_a"
 wait "$ret_b"
