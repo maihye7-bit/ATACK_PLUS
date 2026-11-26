@@ -1,272 +1,85 @@
-# ATACK PLUS — Security and RLS Update (Phase 3)
+# ATACK PLUS — Security and RLS (Phase 3, verified role model)
 
-## New RLS Policies for Phase 3 Tables
+## 1. Identity and store boundary
 
-### Tables Added in Phase 3
+- Supabase Auth is the source of identity. PostgreSQL resolves the application user through `users.auth_user_id = auth.uid()`.
+- `current_user_store_id()` resolves the active user's store. A client-supplied `store_id` is never proof of membership.
+- Store isolation is enforced by RLS; sensitive RPCs additionally validate membership and the permission required for the operation.
+- The business model is one store owner/Super Admin plus individual sellers. The database role key `cashier` is the technical role currently assigned to a seller; it does not introduce a separate cashier job into the business model.
 
-```sql
--- Enable RLS on new tables
-ALTER TABLE purchase_returns ENABLE ROW LEVEL SECURITY;
-ALTER TABLE purchase_return_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE stock_adjustments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE inventory_batches ENABLE ROW LEVEL SECURITY;
-ALTER TABLE stock_alerts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE chart_of_accounts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE journal_entries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE general_ledger ENABLE ROW LEVEL SECURITY;
-```
+## 2. Effective seeded role permissions
 
-### Store Isolation Policies
+The following reflects the executable Phase 1 seed plus the Phase 3 permission migrations, not a proposed future matrix.
 
-```sql
--- Purchase Returns
-CREATE POLICY purchase_returns_store_isolation ON purchase_returns
-    FOR ALL USING (store_id = public.current_user_store_id())
-    WITH CHECK (store_id = public.current_user_store_id());
+| Database role | Effective permissions and boundaries |
+|---|---|
+| `owner` | All catalogued permissions, including `users.manage`, `settings.write`, `audit.read`, `purchases.return`, `inventory.adjust`, and `inventory.allow_negative`. Store-wide visibility over sellers' sales and financial records. |
+| `admin` | All Phase 1 permissions except `settings.write`; receives the Phase 3 privileged purchase and inventory permissions. Does **not** receive `audit.read`. Cannot grant a role containing permissions the admin does not hold, including the full `owner` role. |
+| `accountant` | `reports.financial`, `reports.inventory`, `customers.read`, `suppliers.read`, `customers.payments`, `suppliers.payments`, `sales.read`, `purchases.read`. No sales/purchase creation, purchase returns, inventory adjustment, user management, or audit access. |
+| `cashier` (seller) | `products.read`, `inventory.read`, `sales.read`, `sales.write`, `sales.void`, `customers.read`, `customers.write`, `customers.payments`, `reports.inventory`. Sales invoices, returns, customer payment activity and allocations are restricted to the authenticated seller's own activity; the owner can see all sellers' activity. No purchase, supplier-payment, inventory-write/adjustment, financial-report, user-management, or audit privileges. |
+| `stock_keeper` | `products.read`, `products.write`, `inventory.read`, `inventory.write`, `purchases.read`, `purchases.write`, `purchases.receive`, `suppliers.read`, `reports.inventory`. Does not receive the separately privileged `inventory.adjust`, `purchases.return`, `users.manage`, or `audit.read` permissions by default. |
 
-CREATE POLICY purchase_return_items_store_isolation ON purchase_return_items
-    FOR ALL USING (
-        EXISTS (SELECT 1 FROM purchase_returns pr 
-                WHERE pr.id = return_id AND pr.store_id = public.current_user_store_id())
-    );
+### Important distinctions
 
--- Stock Adjustments
-CREATE POLICY stock_adjustments_store_isolation ON stock_adjustments
-    FOR ALL USING (store_id = public.current_user_store_id())
-    WITH CHECK (store_id = public.current_user_store_id());
+- `inventory.write` is not interchangeable with `inventory.adjust`. The stock-adjustment RPC requires `inventory.adjust`, granted by the current migration to `owner` and `admin`.
+- `purchases.return` and the special purchase lifecycle permissions (`purchases.close_remaining`, `purchases.receive_excess`, `purchases.receive_substitute`, `purchases.edit_after_receipt`) are granted to `owner` and `admin`.
+- `audit.read` is reserved for `owner`.
+- Sellers can read the stock/product information and inventory reports explicitly granted to the `cashier` role for sales work, but cannot write or adjust stock. Their sales and customer-payment visibility remains seller-scoped.
+- `reports.view`, `accounting.view`, and `accounting.create` are not the permission codes used by the current SQL implementation. Do not add them to application checks or documentation as if they were active permissions. The current codes are `reports.inventory`, `reports.financial`, and the specific business-operation permissions above.
 
--- Inventory Batches
-CREATE POLICY inventory_batches_store_isolation ON inventory_batches
-    FOR ALL USING (store_id = public.current_user_store_id())
-    WITH CHECK (store_id = public.current_user_store_id());
+## 3. RPC authorization contract
 
--- Stock Alerts
-CREATE POLICY stock_alerts_store_isolation ON stock_alerts
-    FOR ALL USING (store_id = public.current_user_store_id())
-    WITH CHECK (store_id = public.current_user_store_id());
+| Operation | Required permission | Current role boundary |
+|---|---|---|
+| Create sale / process sale return | `sales.write` | Owner, admin, seller (`cashier`) |
+| Create purchase / receive purchase | `purchases.write` / `purchases.receive` | Owner, admin, stock keeper (according to each permission) |
+| Purchase return | `purchases.return` | Owner, admin |
+| Customer payment | `customers.payments` | Owner, admin, accountant, seller; seller allocations are limited to the seller's own invoices |
+| Supplier payment | `suppliers.payments` | Owner, admin, accountant |
+| Stock adjustment | `inventory.adjust` | Owner, admin |
+| Negative inventory exception | `inventory.allow_negative` | Owner, admin; must pass the RPC's reason and audit requirements |
+| Inventory expiry / low-stock reports | `reports.inventory` | Roles granted that permission; seller report access is read-only |
+| Financial reports and accounting reads | `reports.financial` | Owner, admin, accountant |
+| User/profile/role management | `users.manage` | Owner, admin, with role-permission coverage enforced by the management RPC |
+| Audit trail read | `audit.read` | Owner only |
+| Sync administration | `sync.manage` | Owner, admin |
 
--- Chart of Accounts
-CREATE POLICY chart_of_accounts_store_isolation ON chart_of_accounts
-    FOR ALL USING (store_id = public.current_user_store_id())
-    WITH CHECK (store_id = public.current_user_store_id());
+All exposed business RPCs must derive the actor from `auth.uid()`, verify active membership in the requested store, check the exact permission, and preserve transaction/idempotency invariants. Direct authenticated writes to financial, inventory-derived, identity, audit and sync-state tables remain denied where the operation is RPC-only. `service_role` is server-side only and must never be embedded in a client application.
 
--- Journal Entries
-CREATE POLICY journal_entries_store_isolation ON journal_entries
-    FOR ALL USING (store_id = public.current_user_store_id())
-    WITH CHECK (store_id = public.current_user_store_id());
+## 4. Seller-specific data visibility
 
--- General Ledger
-CREATE POLICY general_ledger_store_isolation ON general_ledger
-    FOR ALL USING (store_id = public.current_user_store_id())
-    WITH CHECK (store_id = public.current_user_store_id());
-```
+- The seller may read only invoices created by that seller, their invoice lines, returns attached to those invoices, and their own customer payment/ledger/allocation records.
+- A seller cannot allocate a customer payment to another seller's invoice.
+- The owner can read all sellers' invoices, related returns, customer payment records, allocations, users, inventory and accounting data within the owner's store.
+- A user from another store cannot read or mutate this store's records.
+- The seller cannot view the device inventory or user-role assignments without the corresponding management permission.
 
-## Phase 3 Permission Requirements
+## 5. Role and account administration
 
-### New Permission Codes
+- Direct writes to `users` and `user_roles` are revoked from authenticated clients. Use the controlled profile and role-management RPCs.
+- A caller may grant/revoke only roles whose complete permission set is contained in the caller's own effective permissions. This prevents an admin from granting the owner role.
+- A user cannot be left without a role through the role-management RPC. Cross-store and inactive targets are rejected.
+- User provisioning requires an existing Supabase Auth identity; passwords and credentials remain in Supabase Auth, not the application `users` table.
+- Deactivation and role changes are audited; the last active owner cannot be deactivated.
 
-Based on Phase 3 requirements, these permissions should be present in `permissions` table:
+## 6. RLS, grants, function hardening and audit
 
-| Permission Code | Role Usage |
-|-----------------|------------|
-| `purchases.return` | Required for `process_purchase_return` RPC |
-| `inventory.adjust` | Required for `process_stock_adjustment` RPC |
-| `reports.view` | Required for `check_inventory_expiry` and `check_low_stock` |
-| `accounting.view` | Required to read journal entries and ledger |
-| `accounting.create` | Required to create journal entries (typically system only) |
+- RLS must be enabled on every public business/operational table.
+- Read policies combine store isolation with the role permission matrix; seller-owned sales and customer payment data add creator-level filtering.
+- Direct writes to protected/derived tables are denied to authenticated clients and performed through controlled RPCs.
+- SECURITY DEFINER functions use a fixed `search_path`; implicit PUBLIC/anon execution is revoked. Explicit authenticated/service-role grants must be limited to intended entry points.
+- Audit logs are append-only and visible only to users with `audit.read`. Business/admin mutations are recorded without authentication secrets or tokens.
+- Audit coverage is supplemented by explicit domain events for operations whose complete business context cannot be represented by a generic row trigger.
 
-### Default Role Permissions
+## 7. Automated verification
 
-Update `role_permissions` table:
+The current CI suite includes:
+- Real Supabase Auth owner/seller JWT tests for store isolation, seller-owned invoice/payment boundaries, privileged RPC denials, owner role management, and direct financial-write denial.
+- Catalog-level RLS and SECURITY DEFINER privilege checks.
+- Role-management, user-account and device-visibility regressions.
+- Role-based SELECT visibility tests for business, financial, inventory and synchronization tables.
+- Audit append-only, attribution and event-coverage regressions.
 
-| Role | Additional Permissions Granted |
-|------|-------------------------------|
-| `owner` | All Phase 3 permissions |
-| `admin` | All Phase 3 permissions |
-| `accountant` | `purchases.return`, `inventory.adjust`, `reports.view`, `accounting.view` |
-| `cashier` | `purchases.return` (limited by store) |
-| `stock_keeper` | `inventory.adjust`, `reports.view` |
+The role-matrix regression additionally verifies the effective permissions for owner, admin, accountant, seller (`cashier`) and stock keeper, and verifies that an admin cannot grant the full owner role.
 
-## Phase 3 Cross-Store Validation
-
-### Purchase Return Store Validation
-
-```sql
-CREATE OR REPLACE FUNCTION public.validate_purchase_return_same_store()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_purchase_store UUID;
-BEGIN
-    SELECT p.store_id INTO v_purchase_store 
-    FROM purchases p 
-    WHERE p.id = NEW.original_purchase_id;
-    
-    IF v_purchase_store IS DISTINCT FROM NEW.store_id THEN
-        RAISE EXCEPTION 'Purchase return must reference a purchase from the same store';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_purchase_returns_same_store
-    BEFORE INSERT OR UPDATE ON purchase_returns
-    FOR EACH ROW EXECUTE FUNCTION public.validate_purchase_return_same_store();
-```
-
-### Return Items Store Validation
-
-The `purchase_return_items` and `return_items` (sales returns) benefit from existing cross-store validation via the `validate_same_store_references` function already defined in the base schema.
-
-## Financial Data Protection (Phase 3)
-
-### Journal Entries Immutability
-
-Financial records in Phase 3 must follow the same principles as Phase 2:
-
-```sql
--- Journal entries should only be created via RPC
--- Not directly from application
-REVOKE INSERT, UPDATE, DELETE ON journal_entries FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON journal_entries TO authenticated;
-GRANT EXECUTE ON FUNCTION public.process_stock_adjustment TO authenticated;
-```
-
-### General Ledger Immutability
-
-Ledger entries from business operations:
-- Should be immutable (no direct UPDATE/DELETE)
-- Only created through proper RPC calls
-- Must balance (debit = credit)
-
-```sql
--- Prevent direct modification
-CREATE POLICY prevent_direct_ledger_modification ON general_ledger
-    FOR UPDATE, DELETE USING (false);
-```
-
-## Audit Logging for Phase 3
-
-### Additional Tables Requiring Audit
-
-```sql
--- Change log triggers for new tables
-CREATE TRIGGER trg_purchase_returns_log_change
-    AFTER INSERT OR UPDATE OR DELETE ON purchase_returns
-    FOR EACH ROW EXECUTE FUNCTION trg_log_change();
-
-CREATE TRIGGER trg_stock_adjustments_log_change
-    AFTER INSERT OR UPDATE OR DELETE ON stock_adjustments
-    FOR EACH ROW EXECUTE FUNCTION trg_log_change();
-```
-
-### New Audit Actions
-
-Phase 3 adds these important operations to audit:
-- Stock adjustments (`ADJUSTMENT`)
-- Purchase returns (`VOID` equivalent)
-- Journal entry creation (`SYNC` for automated entries)
-
-## Device Authentication Updates (Phase 3)
-
-### New Sync Operations
-
-Phase 3 introduces additional sync operation types:
-
-| Operation Type | Description |
-|----------------|-------------|
-| `purchase_return` | Purchase return via RPC |
-| `sale_return` | Sales return via RPC |
-| `stock_adjustment` | Stock adjustment via RPC |
-| `inventory_sync` | Batch/lot data sync |
-
-### Device Permission Checks
-
-Phase 3 operations require the same device/store validation as Phase 2, but with additional financial permission checks.
-
-## Security Testing Checklist (Phase 3)
-
-Before Phase 3 deployment, verify:
-
-1. **Store Isolation**
-   - [ ] User from store A cannot read purchase_returns from store B
-   - [ ] User cannot create return for purchase from another store
-   - [ ] Stock adjustments isolated by store
-
-2. **Permission Enforcement**
-   - [ ] Users without `purchases.return` cannot execute `process_purchase_return`
-   - [ ] Users without `inventory.adjust` cannot execute `process_stock_adjustment`
-   - [ ] Users without `reports.view` cannot call report functions
-
-3. **Financial Data Protection**
-   - [ ] General ledger only writable via RPC
-   - [ ] Journal entries cannot be modified after creation
-   - [ ] Balance sheet/debit-credit always balance
-
-4. **Audit Completeness**
-   - [ ] All stock adjustments logged in audit_logs
-   - [ ] All returns logged with proper user/store context
-   - [ ] Financial operations traceable
-
-5. **Concurrency Safety**
-   - [ ] Multiple devices cannot create conflicting adjustments
-   - [ ] Return quantity cannot exceed available stock
-   - [ ] Debt adjustments are serialized
-
-## Error Handling and Security
-
-### Common Security Errors
-
-| Error Message | SQLSTATE | Cause |
-|---------------|----------|-------|
-| User is not an active member of this store | 42501 | auth.uid() doesn't match store |
-| Missing permission: purchases.return | 42501 | Role lacks permission |
-| Purchase return must reference a purchase from the same store | P0001 | Cross-store reference |
-| Insufficient stock available for product % to return | 23514 | Business rule violation |
-| Reason for adjustment is required | P0001 | Missing required field |
-
-### Row-Level Security Best Practices
-
-Phase 3 follows these RLS principles:
-
-1. **Never trust client-provided store_id** - Always use `current_user_store_id()`
-2. **Validate relationships** - Check parent records belong to same store
-3. **Use deterministic paths** - Always validate through `auth.uid()`
-4. **Block direct financial writes** - Financial tables only writable via RPC
-5. **Serialize critical operations** - Use row locks in RPC functions
-
-## Permission Migration Script
-
-Run this after applying Phase 3 schema to ensure permissions:
-
-```sql
--- Add Phase 3 permissions if not exist
-INSERT INTO permissions (code, description) VALUES
-    ('purchases.return', 'Create purchase returns'),
-    ('inventory.adjust', 'Adjust stock quantities'),
-    ('reports.view', 'View inventory and financial reports'),
-    ('accounting.view', 'View journal entries and ledger'),
-    ('accounting.create', 'Create journal entries')
-ON CONFLICT (code) DO NOTHING;
-
--- Grant permissions to roles
--- This requires knowing the permission IDs, but using a one-time setup:
-WITH role_perms AS MATERIALIZED (
-    SELECT 
-        r.id as role_id,
-        p.id as perm_id,
-        p.code,
-        'owner' as granted_role
-    FROM roles r
-    CROSS JOIN permissions p
-    WHERE p.code IN ('purchases.return', 'inventory.adjust', 'reports.view', 'accounting.view')
-)
-INSERT INTO role_permissions (role_id, permission_id, granted_by)
-SELECT rp.role_id, rp.perm_id, u.id
-FROM role_perms rp
-JOIN users u ON u.role_id = 'owner'
-ON CONFLICT DO NOTHING;
-```
-
----
-
-*This update replaces conflicting sections in SECURITY_RLS.md for Phase 3 features.*
+These CI checks run against isolated PostgreSQL/Supabase test environments. They are not evidence of production deployment or staging acceptance.
