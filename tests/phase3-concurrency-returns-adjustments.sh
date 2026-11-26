@@ -194,6 +194,7 @@ SELECT public.process_stock_adjustment(
  '$STORE','$op',
  jsonb_build_object('id','$id','product_id','50000000-0000-4000-8000-000000000013',
    'adjustment_type','$kind','quantity',$qty,'unit_id','pcs',
+   'adjustment_number',CASE WHEN '$kind'='INCREASE' THEN 'PH3-CONC-ADJ-INCREASE' ELSE 'PH3-CONC-ADJ-DECREASE' END,
    'cost_per_unit',$cost,'location_id','main','reason','Concurrent adjustment regression'));
 SQL
   then printf success >"$out.status"; else printf rejected >"$out.status"; fi
