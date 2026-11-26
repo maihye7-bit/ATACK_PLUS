@@ -459,6 +459,20 @@ echo "Verifying real JWT owner/seller read boundaries through PostgREST..."
 SELLER_INVOICES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/invoices?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 SELLER_PURCHASES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/purchases?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 SELLER_JOURNALS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/journal_entries?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+# Seller access must not expose owner-managed purchasing, supplier, inventory-control or accounting data.
+SELLER_OWNER_ONLY_TABLES=(
+  suppliers supplier_ledger supplier_payments purchase_returns purchase_return_items
+  stock_adjustments inventory_batches purchase_receipts purchase_receipt_items
+  purchase_closures purchase_closure_items purchase_amendments chart_of_accounts
+  general_ledger expenses revenues devices user_roles
+)
+for table in "${SELLER_OWNER_ONLY_TABLES[@]}"; do
+  seller_rows="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/${table}?select=*" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+  [[ "$(jq 'length' <<<"${seller_rows}")" -eq 0 ]] || {
+    echo "Seller can read owner-managed table public.${table}: ${seller_rows}" >&2
+    exit 1
+  }
+done
 SELLER_PROFILES="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/users?select=id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
 [[ "$(jq 'length' <<<"${SELLER_INVOICES}")" -eq 3 ]] || { echo "Seller must see exactly their three own sales invoices; received: ${SELLER_INVOICES}"; exit 1; }
 [[ "$(jq -e --arg id "a5000000-0000-4000-8000-000000000017" --arg seller "${SELLER_USER}" 'any(.[]; .id==$id and .created_by==$seller)' <<<"${SELLER_INVOICES}")" == "true" ]] || { echo "Seller cannot see the invoice used for seller-specific payment allocation"; exit 1; }
