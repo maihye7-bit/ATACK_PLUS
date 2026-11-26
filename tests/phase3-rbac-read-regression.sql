@@ -52,6 +52,18 @@ BEGIN
     RAISE EXCEPTION 'Users self-profile / users.manage read policy is missing';
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='customer_ledgers' AND policyname='rbac_read_customer_ledgers'
+      AND cmd='SELECT' AND permissive='RESTRICTIVE')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='customer_payments' AND policyname='rbac_read_customer_payments'
+      AND cmd='SELECT' AND permissive='RESTRICTIVE')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+      AND tablename='payment_allocations' AND policyname='rbac_read_payment_allocations'
+      AND cmd='SELECT' AND permissive='RESTRICTIVE') THEN
+    RAISE EXCEPTION 'Seller-specific customer payment, ledger or allocation read policies are missing';
+  END IF;
+
   IF NOT has_table_privilege('authenticated','public.stores','SELECT') THEN
     RAISE EXCEPTION 'authenticated lacks SELECT ACL on public.stores';
   END IF;
