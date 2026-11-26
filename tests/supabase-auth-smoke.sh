@@ -36,12 +36,15 @@ SALE_ID="a5000000-0000-4000-8000-000000000001"
 SALE_ITEM_ID="a5000000-0000-4000-8000-000000000002"
 SALE_OPERATION="a5000000-0000-4000-8000-000000000003"
 CUSTOMER_A="a4000000-0000-4000-8000-000000000002"
+CUSTOMER_B="a4000000-0000-4000-8000-000000000003"
 CUSTOMER_SALE_ID="a5000000-0000-4000-8000-000000000004"
 CUSTOMER_SALE_ITEM_ID="a5000000-0000-4000-8000-000000000005"
 CUSTOMER_SALE_OPERATION="a5000000-0000-4000-8000-000000000006"
 CUSTOMER_PAYMENT_ID="a5000000-0000-4000-8000-000000000007"
 CUSTOMER_PAYMENT_OPERATION="a5000000-0000-4000-8000-000000000008"
 OWNER_CUSTOMER_PAYMENT_ID="a5000000-0000-4000-8000-000000000014"
+SELLER_OWN_PAYMENT_ID="a5000000-0000-4000-8000-000000000018"
+SELLER_OWN_PAYMENT_OPERATION="a5000000-0000-4000-8000-000000000019"
 SYNC_DEVICE_A="a7000000-0000-4000-8000-000000000001"
 OUTBOX_CATEGORY_ID="a7000000-0000-4000-8000-000000000002"
 OUTBOX_IDEMPOTENCY_KEY="a7000000-0000-4000-8000-000000000003"
@@ -74,7 +77,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -v store_a="$STORE_A" -v store_b="$STORE_B" \
   -v product_a="$PRODUCT_A" -v product_b="$PRODUCT_B" \
   -v store_b_user="$STORE_B_USER" -v supplier_a="$SUPPLIER_A" \
-  -v customer_a="$CUSTOMER_A" -v sync_device_a="$SYNC_DEVICE_A" <<'SQL'
+  -v customer_a="$CUSTOMER_A" -v customer_b="$CUSTOMER_B" -v sync_device_a="$SYNC_DEVICE_A" <<'SQL'
 INSERT INTO public.stores(id,name) VALUES
   (:'store_a'::uuid,'Auth smoke store A'),
   (:'store_b'::uuid,'Auth smoke store B');
@@ -95,7 +98,9 @@ INSERT INTO public.suppliers(id,store_id,code,name,is_active)
 VALUES (:'supplier_a'::uuid, :'store_a'::uuid, 'AUTH-SUP-001', 'Auth RPC Supplier', TRUE);
 
 INSERT INTO public.customers(id,store_id,code,name,current_debt,credit_balance,is_active)
-VALUES (:'customer_a'::uuid, :'store_a'::uuid, 'AUTH-CUST-001', 'Auth RPC Customer', 3, 0, TRUE);
+VALUES
+ (:'customer_a'::uuid, :'store_a'::uuid, 'AUTH-CUST-001', 'Auth RPC Customer', 0, 0, TRUE),
+ (:'customer_b'::uuid, :'store_a'::uuid, 'AUTH-CUST-002', 'Seller Allocation Isolation Customer', 11, 0, TRUE);
 
 INSERT INTO public.products(store_id,id,name,primary_unit_id,cost_price,default_sale_price)
 VALUES
@@ -110,17 +115,26 @@ INSERT INTO public.invoices(
   id,store_id,invoice_number,type,customer_id,invoice_date,total_amount,paid_amount,remaining_amount,created_by,status
 ) VALUES (
   'a5000000-0000-4000-8000-000000000009',
-  :'store_a'::uuid,'AUTH-OWNER-PRIVATE-001','SALE',:'customer_a'::uuid,NOW(),4,1,3,:'user_a'::uuid,'PARTIAL'
+  :'store_a'::uuid,'AUTH-OWNER-PRIVATE-001','SALE',:'customer_b'::uuid,NOW()-INTERVAL '1 day',4,1,3,:'user_a'::uuid,'PARTIAL'
+);
+
+-- A later seller-owned open invoice shares the same customer. The seller's
+-- automatic receipt must skip the older owner invoice and settle only this one.
+INSERT INTO public.invoices(
+  id,store_id,invoice_number,type,customer_id,invoice_date,total_amount,paid_amount,remaining_amount,created_by,status
+) VALUES (
+  'a5000000-0000-4000-8000-000000000017',
+  :'store_a'::uuid,'AUTH-SELLER-OWN-OPEN-001','SALE',:'customer_b'::uuid,NOW(),8,0,8,:'seller_user'::uuid,'OPEN'
 );
 
 -- A customer receipt belonging to the owner and its ledger/allocation rows
 -- are seeded to verify that a seller cannot read another seller's financial activity.
 INSERT INTO public.customer_payments(id,customer_id,amount,payment_method,created_by)
-VALUES ('a5000000-0000-4000-8000-000000000014',:'customer_a'::uuid,1,'CASH',:'user_a'::uuid);
+VALUES ('a5000000-0000-4000-8000-000000000014',:'customer_b'::uuid,1,'CASH',:'user_a'::uuid);
 INSERT INTO public.payment_allocations(payment_id,invoice_id,allocated_amount)
 VALUES ('a5000000-0000-4000-8000-000000000014','a5000000-0000-4000-8000-000000000009',1);
 INSERT INTO public.customer_ledgers(customer_id,type,amount,balance,reference_id,description,created_by)
-VALUES (:'customer_a'::uuid,'PAYMENT',-1,3,'a5000000-0000-4000-8000-000000000014',
+VALUES (:'customer_b'::uuid,'PAYMENT',-1,10,'a5000000-0000-4000-8000-000000000014',
         'Owner-only customer payment fixture',:'user_a'::uuid);
 
 INSERT INTO public.devices(id,store_id,device_name,device_type)
@@ -331,8 +345,17 @@ CUSTOMER_PAYMENT_RESULT="$(rpc_call "$SELLER_TOKEN" "process_customer_payment" "
 CUSTOMER_PAYMENT_REPLAY="$(rpc_call "$SELLER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
 [[ "$(jq -r '.replayed' <<<"$CUSTOMER_PAYMENT_REPLAY")" == "true" ]] || { echo "Customer payment replay was not idempotent: $CUSTOMER_PAYMENT_REPLAY" >&2; exit 1; }
 
-FOREIGN_ALLOCATION_PAYLOAD="$(jq -nc --arg id "a5000000-0000-4000-8000-000000000015" --arg customer "$CUSTOMER_A" '{id:$id,customer_id:$customer,amount:1,payment_method:"CASH",allocations:[{invoice_id:"a5000000-0000-4000-8000-000000000009",amount:1}]}')"
-FOREIGN_ALLOCATION_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "a5000000-0000-4000-8000-000000000016" --argjson payload "$FOREIGN_ALLOCATION_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+SELLER_OWN_PAYMENT_PAYLOAD="$(jq -nc --arg id "$SELLER_OWN_PAYMENT_ID" --arg customer "$CUSTOMER_B" '{id:$id,customer_id:$customer,amount:3,payment_method:"CASH"}')"
+SELLER_OWN_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SELLER_OWN_PAYMENT_OPERATION" --argjson payload "$SELLER_OWN_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+SELLER_OWN_PAYMENT_RESULT="$(rpc_call "$SELLER_TOKEN" "process_customer_payment" "$SELLER_OWN_PAYMENT_ARGS")"
+[[ "$(jq -r '.success' <<<"$SELLER_OWN_PAYMENT_RESULT")" == "true" ]] || { echo "Seller payment for own invoice failed: $SELLER_OWN_PAYMENT_RESULT" >&2; exit 1; }
+if [[ "$(psql "$DB_URL" -Atqc "SELECT invoice_id::text FROM public.payment_allocations WHERE payment_id='$SELLER_OWN_PAYMENT_ID'::uuid")" != "a5000000-0000-4000-8000-000000000017" ]]; then
+  echo "Seller payment was not allocated exclusively to the seller-owned invoice" >&2
+  exit 1
+fi
+
+FOREIGN_ALLOCATION_PAYLOAD="$(jq -nc --arg id "a5000000-0000-4000-8000-000000000020" --arg customer "$CUSTOMER_B" '{id:$id,customer_id:$customer,amount:1,payment_method:"CASH",allocations:[{invoice_id:"a5000000-0000-4000-8000-000000000009",amount:1}]}')"
+FOREIGN_ALLOCATION_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "a5000000-0000-4000-8000-000000000021" --argjson payload "$FOREIGN_ALLOCATION_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
 expect_rpc_error "seller allocating payment to another seller's invoice" "$SELLER_TOKEN" "process_customer_payment" "$FOREIGN_ALLOCATION_ARGS" "P0001"
 
 echo "Verifying seller-specific customer payment, ledger and allocation visibility..."
@@ -344,10 +367,10 @@ SELLER_PAYMENT_ALLOCATIONS="$(curl --fail-with-body --silent --show-error "${API
 OWNER_PAYMENT_ALLOCATIONS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/payment_allocations?select=payment_id,invoice_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
 [[ "$(jq 'length' <<<"${SELLER_CUSTOMER_PAYMENTS}")" -eq 2 && "$(jq -e --arg owner "a5000000-0000-4000-8000-000000000014" 'all(.[]; .id!=$owner)' <<<"${SELLER_CUSTOMER_PAYMENTS}")" == "true" ]] || { echo "Seller can see owner customer payments: ${SELLER_CUSTOMER_PAYMENTS}" >&2; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_CUSTOMER_PAYMENTS}")" -eq 3 ]] || { echo "Owner cannot see all customer payments: ${OWNER_CUSTOMER_PAYMENTS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${SELLER_CUSTOMER_LEDGERS}")" -eq 5 && "$(jq -e --arg owner "a3000000-0000-4000-8000-000000000001" 'all(.[]; .created_by!=$owner)' <<<"${SELLER_CUSTOMER_LEDGERS}")" == "true" ]] || { echo "Seller can see owner customer ledger rows: ${SELLER_CUSTOMER_LEDGERS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${OWNER_CUSTOMER_LEDGERS}")" -eq 6 ]] || { echo "Owner cannot see all customer ledger rows: ${OWNER_CUSTOMER_LEDGERS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" -eq 2 && "$(jq -e --arg owner_invoice "a5000000-0000-4000-8000-000000000009" 'all(.[]; .invoice_id!=$owner_invoice)' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" == "true" ]] || { echo "Seller can see a foreign payment allocation or cannot see own allocations: ${SELLER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${OWNER_PAYMENT_ALLOCATIONS}")" -eq 3 ]] || { echo "Owner cannot see all customer payment allocations: ${OWNER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_CUSTOMER_LEDGERS}")" -eq 6 && "$(jq -e --arg owner "a3000000-0000-4000-8000-000000000001" 'all(.[]; .created_by!=$owner)' <<<"${SELLER_CUSTOMER_LEDGERS}")" == "true" ]] || { echo "Seller can see owner customer ledger rows: ${SELLER_CUSTOMER_LEDGERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_CUSTOMER_LEDGERS}")" -eq 7 ]] || { echo "Owner cannot see all customer ledger rows: ${OWNER_CUSTOMER_LEDGERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" -eq 3 && "$(jq -e --arg owner_invoice "a5000000-0000-4000-8000-000000000009" 'all(.[]; .invoice_id!=$owner_invoice)' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" == "true" ]] || { echo "Seller can see a foreign payment allocation or cannot see own allocations: ${SELLER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_PAYMENT_ALLOCATIONS}")" -eq 4 ]] || { echo "Owner cannot see all customer payment allocations: ${OWNER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
 
 SUPPLIER_PAYMENT_PAYLOAD="$(jq -nc --arg id "$SUPPLIER_PAYMENT_ID" --arg supplier "$SUPPLIER_A" '{id:$id,supplier_id:$supplier,amount:5,payment_method:"BANK_TRANSFER"}')"
 SUPPLIER_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SUPPLIER_PAYMENT_OPERATION" --argjson payload "$SUPPLIER_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
