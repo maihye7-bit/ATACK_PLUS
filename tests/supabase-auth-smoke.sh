@@ -41,6 +41,7 @@ CUSTOMER_SALE_ITEM_ID="a5000000-0000-4000-8000-000000000005"
 CUSTOMER_SALE_OPERATION="a5000000-0000-4000-8000-000000000006"
 CUSTOMER_PAYMENT_ID="a5000000-0000-4000-8000-000000000007"
 CUSTOMER_PAYMENT_OPERATION="a5000000-0000-4000-8000-000000000008"
+OWNER_CUSTOMER_PAYMENT_ID="a5000000-0000-4000-8000-000000000014"
 SYNC_DEVICE_A="a7000000-0000-4000-8000-000000000001"
 OUTBOX_CATEGORY_ID="a7000000-0000-4000-8000-000000000002"
 OUTBOX_IDEMPOTENCY_KEY="a7000000-0000-4000-8000-000000000003"
@@ -94,7 +95,7 @@ INSERT INTO public.suppliers(id,store_id,code,name,is_active)
 VALUES (:'supplier_a'::uuid, :'store_a'::uuid, 'AUTH-SUP-001', 'Auth RPC Supplier', TRUE);
 
 INSERT INTO public.customers(id,store_id,code,name,current_debt,credit_balance,is_active)
-VALUES (:'customer_a'::uuid, :'store_a'::uuid, 'AUTH-CUST-001', 'Auth RPC Customer', 0, 0, TRUE);
+VALUES (:'customer_a'::uuid, :'store_a'::uuid, 'AUTH-CUST-001', 'Auth RPC Customer', 3, 0, TRUE);
 
 INSERT INTO public.products(store_id,id,name,primary_unit_id,cost_price,default_sale_price)
 VALUES
@@ -106,11 +107,21 @@ VALUES (:'product_a'::uuid,'main',10,0);
 
 -- Owner-created sale proves sellers cannot read another user's invoice.
 INSERT INTO public.invoices(
-  id,store_id,invoice_number,type,invoice_date,total_amount,created_by
+  id,store_id,invoice_number,type,customer_id,invoice_date,total_amount,paid_amount,remaining_amount,created_by,status
 ) VALUES (
   'a5000000-0000-4000-8000-000000000009',
-  :'store_a'::uuid,'AUTH-OWNER-PRIVATE-001','SALE',NOW(),0,:'user_a'::uuid
+  :'store_a'::uuid,'AUTH-OWNER-PRIVATE-001','SALE',:'customer_a'::uuid,NOW(),4,1,3,:'user_a'::uuid,'PARTIAL'
 );
+
+-- A customer receipt belonging to the owner and its ledger/allocation rows
+-- are seeded to verify that a seller cannot read another seller's financial activity.
+INSERT INTO public.customer_payments(id,customer_id,amount,payment_method,created_by)
+VALUES ('a5000000-0000-4000-8000-000000000014',:'customer_a'::uuid,1,'CASH',:'user_a'::uuid);
+INSERT INTO public.payment_allocations(payment_id,invoice_id,allocated_amount)
+VALUES ('a5000000-0000-4000-8000-000000000014','a5000000-0000-4000-8000-000000000009',1);
+INSERT INTO public.customer_ledgers(customer_id,type,amount,balance,reference_id,description,created_by)
+VALUES (:'customer_a'::uuid,'PAYMENT',-1,3,'a5000000-0000-4000-8000-000000000014',
+        'Owner-only customer payment fixture',:'user_a'::uuid);
 
 INSERT INTO public.devices(id,store_id,device_name,device_type)
 VALUES (:'sync_device_a'::uuid,:'store_a'::uuid,'Auth Smoke Sync Device','DESKTOP');
@@ -276,6 +287,10 @@ expect_rpc_denied "seller privileged stock adjustment" "$SELLER_TOKEN" "process_
 ADJUSTMENT_RESULT="$(rpc_call "$OWNER_TOKEN" "process_stock_adjustment" "$ADJUSTMENT_ARGS")"
 [[ "$(jq -r '.success' <<<"$ADJUSTMENT_RESULT")" == "true" ]] || { echo "Stock adjustment failed: $ADJUSTMENT_RESULT" >&2; exit 1; }
 
+FOREIGN_SALE_RETURN_PAYLOAD="$(jq -nc --arg id "a6000000-0000-4000-8000-000000000030" --arg invoice "a5000000-0000-4000-8000-000000000009" '{id:$id,invoice_id:$invoice,return_number:"AUTH-FOREIGN-SELLER-RETURN",items:[]}')"
+FOREIGN_SALE_RETURN_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "a6000000-0000-4000-8000-000000000031" --argjson payload "$FOREIGN_SALE_RETURN_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+expect_rpc_error "seller returning another seller's invoice" "$SELLER_TOKEN" "process_sale_return" "$FOREIGN_SALE_RETURN_ARGS" "P0001"
+
 SALE_RETURN_PAYLOAD="$(jq -nc --arg id "$SALE_RETURN_ID" --arg invoice "$SALE_ID" --arg product "$PRODUCT_A" --arg item "$SALE_ITEM_ID" '{id:$id,invoice_id:$invoice,return_number:"AUTH-SRET-001",refund_method:"CREDIT",items:[{invoice_item_id:$item,product_id:$product,quantity:1,unit_id:"pcs"}]}')"
 SALE_RETURN_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SALE_RETURN_OPERATION" --argjson payload "$SALE_RETURN_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
 SALE_RETURN_RESULT="$(rpc_call "$SELLER_TOKEN" "process_sale_return" "$SALE_RETURN_ARGS")"
@@ -315,6 +330,24 @@ CUSTOMER_PAYMENT_RESULT="$(rpc_call "$SELLER_TOKEN" "process_customer_payment" "
 [[ "$(jq -r '.success' <<<"$CUSTOMER_PAYMENT_RESULT")" == "true" ]] || { echo "Customer payment failed: $CUSTOMER_PAYMENT_RESULT" >&2; exit 1; }
 CUSTOMER_PAYMENT_REPLAY="$(rpc_call "$SELLER_TOKEN" "process_customer_payment" "$CUSTOMER_PAYMENT_ARGS")"
 [[ "$(jq -r '.replayed' <<<"$CUSTOMER_PAYMENT_REPLAY")" == "true" ]] || { echo "Customer payment replay was not idempotent: $CUSTOMER_PAYMENT_REPLAY" >&2; exit 1; }
+
+FOREIGN_ALLOCATION_PAYLOAD="$(jq -nc --arg id "a5000000-0000-4000-8000-000000000015" --arg customer "$CUSTOMER_A" '{id:$id,customer_id:$customer,amount:1,payment_method:"CASH",allocations:[{invoice_id:"a5000000-0000-4000-8000-000000000009",amount:1}]}')"
+FOREIGN_ALLOCATION_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "a5000000-0000-4000-8000-000000000016" --argjson payload "$FOREIGN_ALLOCATION_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
+expect_rpc_error "seller allocating payment to another seller's invoice" "$SELLER_TOKEN" "process_customer_payment" "$FOREIGN_ALLOCATION_ARGS" "P0001"
+
+echo "Verifying seller-specific customer payment, ledger and allocation visibility..."
+SELLER_CUSTOMER_PAYMENTS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/customer_payments?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+OWNER_CUSTOMER_PAYMENTS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/customer_payments?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
+SELLER_CUSTOMER_LEDGERS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/customer_ledgers?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+OWNER_CUSTOMER_LEDGERS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/customer_ledgers?select=id,created_by" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
+SELLER_PAYMENT_ALLOCATIONS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/payment_allocations?select=payment_id,invoice_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${SELLER_TOKEN}")"
+OWNER_PAYMENT_ALLOCATIONS="$(curl --fail-with-body --silent --show-error "${API_URL}/rest/v1/payment_allocations?select=payment_id,invoice_id" -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}")"
+[[ "$(jq 'length' <<<"${SELLER_CUSTOMER_PAYMENTS}")" -eq 2 && "$(jq -e --arg owner "a5000000-0000-4000-8000-000000000014" 'all(.[]; .id!=$owner)' <<<"${SELLER_CUSTOMER_PAYMENTS}")" == "true" ]] || { echo "Seller can see owner customer payments: ${SELLER_CUSTOMER_PAYMENTS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_CUSTOMER_PAYMENTS}")" -eq 3 ]] || { echo "Owner cannot see all customer payments: ${OWNER_CUSTOMER_PAYMENTS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_CUSTOMER_LEDGERS}")" -eq 4 && "$(jq -e --arg owner "a3000000-0000-4000-8000-000000000001" 'all(.[]; .created_by!=$owner)' <<<"${SELLER_CUSTOMER_LEDGERS}")" == "true" ]] || { echo "Seller can see owner customer ledger rows: ${SELLER_CUSTOMER_LEDGERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_CUSTOMER_LEDGERS}")" -eq 5 ]] || { echo "Owner cannot see all customer ledger rows: ${OWNER_CUSTOMER_LEDGERS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" -eq 1 && "$(jq -r '.[0].invoice_id' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" == "${CUSTOMER_SALE_ID}" ]] || { echo "Seller can see a foreign payment allocation or cannot see own allocation: ${SELLER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_PAYMENT_ALLOCATIONS}")" -eq 2 ]] || { echo "Owner cannot see all customer payment allocations: ${OWNER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
 
 SUPPLIER_PAYMENT_PAYLOAD="$(jq -nc --arg id "$SUPPLIER_PAYMENT_ID" --arg supplier "$SUPPLIER_A" '{id:$id,supplier_id:$supplier,amount:5,payment_method:"BANK_TRANSFER"}')"
 SUPPLIER_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SUPPLIER_PAYMENT_OPERATION" --argjson payload "$SUPPLIER_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
