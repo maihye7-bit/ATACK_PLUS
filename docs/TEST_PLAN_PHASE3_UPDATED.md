@@ -576,3 +576,19 @@ Before deploying Phase 3 to production:
 - [ ] Inventory adjustments verified
 - [ ] Performance benchmarks recorded
 - [ ] Rollback plan documented and tested
+
+## 14. Verified Concurrent Returns and Stock Adjustments (2026-11-26)
+
+Executed in the isolated PostgreSQL 16 CI database by
+`tests/phase3-concurrency-returns-adjustments.sh`.
+
+| Scenario | Verified result |
+|---|---|
+| Two simultaneous returns against separate invoices belonging to the same customer | PASS — both returns persisted; customer debt and credit remained correct; stock, return movements, customer ledgers and balanced journal entries reconciled |
+| Two simultaneous stock adjustments against the same product (+10 and -5) | PASS — final quantity was 105; both adjustment records and stock movements persisted; both accounting journals balanced and reconciled to their ledger lines |
+
+The return regression also validates that accounting allocation is read from the persisted result of the underlying return RPC, rather than from a stale pre-call customer-balance snapshot.
+
+The first CI attempt exposed a fixture collision in generated adjustment numbers (the RPC derives its default number from the first eight UUID characters). The test was corrected to supply distinct explicit adjustment numbers. The final SQL workflow run passed, including both concurrency scenarios; the Supabase Auth integration workflow for the same test revision also passed.
+
+Scope note: these results verify the two concurrency scenarios above in CI. They do not constitute staging or production acceptance, nor do they mark every Phase 3 test-plan item as executed.
