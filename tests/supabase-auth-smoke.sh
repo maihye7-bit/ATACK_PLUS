@@ -346,8 +346,8 @@ OWNER_PAYMENT_ALLOCATIONS="$(curl --fail-with-body --silent --show-error "${API_
 [[ "$(jq 'length' <<<"${OWNER_CUSTOMER_PAYMENTS}")" -eq 3 ]] || { echo "Owner cannot see all customer payments: ${OWNER_CUSTOMER_PAYMENTS}" >&2; exit 1; }
 [[ "$(jq 'length' <<<"${SELLER_CUSTOMER_LEDGERS}")" -eq 4 && "$(jq -e --arg owner "a3000000-0000-4000-8000-000000000001" 'all(.[]; .created_by!=$owner)' <<<"${SELLER_CUSTOMER_LEDGERS}")" == "true" ]] || { echo "Seller can see owner customer ledger rows: ${SELLER_CUSTOMER_LEDGERS}" >&2; exit 1; }
 [[ "$(jq 'length' <<<"${OWNER_CUSTOMER_LEDGERS}")" -eq 5 ]] || { echo "Owner cannot see all customer ledger rows: ${OWNER_CUSTOMER_LEDGERS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" -eq 1 && "$(jq -r '.[0].invoice_id' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" == "${CUSTOMER_SALE_ID}" ]] || { echo "Seller can see a foreign payment allocation or cannot see own allocation: ${SELLER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
-[[ "$(jq 'length' <<<"${OWNER_PAYMENT_ALLOCATIONS}")" -eq 2 ]] || { echo "Owner cannot see all customer payment allocations: ${OWNER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" -eq 2 && "$(jq -e --arg owner_invoice "a5000000-0000-4000-8000-000000000009" 'all(.[]; .invoice_id!=$owner_invoice)' <<<"${SELLER_PAYMENT_ALLOCATIONS}")" == "true" ]] || { echo "Seller can see a foreign payment allocation or cannot see own allocations: ${SELLER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
+[[ "$(jq 'length' <<<"${OWNER_PAYMENT_ALLOCATIONS}")" -eq 3 ]] || { echo "Owner cannot see all customer payment allocations: ${OWNER_PAYMENT_ALLOCATIONS}" >&2; exit 1; }
 
 SUPPLIER_PAYMENT_PAYLOAD="$(jq -nc --arg id "$SUPPLIER_PAYMENT_ID" --arg supplier "$SUPPLIER_A" '{id:$id,supplier_id:$supplier,amount:5,payment_method:"BANK_TRANSFER"}')"
 SUPPLIER_PAYMENT_ARGS="$(jq -nc --arg store "$STORE_A" --arg op "$SUPPLIER_PAYMENT_OPERATION" --argjson payload "$SUPPLIER_PAYMENT_PAYLOAD" '{p_store_id:$store,p_operation_id:$op,p_payload:$payload}')"
