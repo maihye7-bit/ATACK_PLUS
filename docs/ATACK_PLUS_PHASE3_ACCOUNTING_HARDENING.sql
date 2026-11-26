@@ -432,6 +432,22 @@ DECLARE
  v_total NUMERIC(18,4); v_applied NUMERIC(18,4); v_credit NUMERIC(18,4);
  v_inventory NUMERIC(18,4); v_lines JSONB:='[]'::JSONB;
 BEGIN
+  -- A seller may return only invoices attributed to that seller. The owner,
+  -- identified by users.manage, retains store-wide return authority.
+  IF NOT public.has_store_permission(p_store_id,'users.manage') THEN
+    IF NOT EXISTS (
+      SELECT 1
+        FROM public.invoices i
+        JOIN public.users actor ON actor.auth_user_id=auth.uid()
+          AND actor.store_id=p_store_id AND actor.is_active=TRUE
+       WHERE i.id=(p_payload->>'invoice_id')::UUID
+         AND i.store_id=p_store_id AND i.type='SALE'
+         AND i.created_by=actor.id
+    ) THEN
+      RAISE EXCEPTION 'Seller cannot process a return for another seller''s invoice';
+    END IF;
+  END IF;
+
  -- Capture the customer's balances before the legacy return RPC mutates debt.
  -- The return is first applied to outstanding receivables; any remainder is
  -- carried as customer credit, never left as a negative receivable.
