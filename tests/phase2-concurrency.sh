@@ -167,3 +167,124 @@ BEGIN
 END
 $last_unit_sale_check$;
 SQL
+
+
+# Two concurrent payments against one customer's outstanding invoice must
+# serialize without losing debt updates or duplicating allocations/journals.
+"${PSQL[@]}" <<'SQL'
+INSERT INTO public.customers(id,store_id,code,name,current_debt,credit_balance,is_active)
+VALUES ('90000000-0000-4000-8000-000000000010',
+        '10000000-0000-4000-8000-000000000001',
+        'CONC-PAY-010','Concurrent Customer Payment Test',0,0,TRUE);
+INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
+VALUES ('50000000-0000-4000-8000-000000000011',
+        '10000000-0000-4000-8000-000000000001',
+        'Concurrent Customer Payment Product','pcs',10,TRUE);
+INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
+VALUES ('50000000-0000-4000-8000-000000000011','main',5,0);
+SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',false);
+SELECT public.process_sale_invoice(
+ '10000000-0000-4000-8000-000000000001',
+ '60000000-0000-4000-8000-000000000043',
+ jsonb_build_object(
+   'id','80000000-0000-4000-8000-000000000043',
+   'invoice_number','PH2-CONC-PAY-INV',
+   'customer_id','90000000-0000-4000-8000-000000000010',
+   'paid_amount',0,
+   'items',jsonb_build_array(jsonb_build_object(
+     'product_id','50000000-0000-4000-8000-000000000011',
+     'quantity',1,'unit_id','pcs','unit_price',100
+   ))
+ )
+);
+SQL
+
+run_customer_payment() {
+  local op_id="$1"
+  local payment_id="$2"
+  local amount="$3"
+  local output="$4"
+  if "${PSQL[@]}" >"$output.log" 2>&1 <<SQL
+SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',false);
+SELECT pg_sleep(0.2);
+SELECT public.process_customer_payment(
+ '10000000-0000-4000-8000-000000000001',
+ '$op_id',
+ jsonb_build_object(
+   'id','$payment_id',
+   'customer_id','90000000-0000-4000-8000-000000000010',
+   'amount',$amount,
+   'payment_method','CASH'
+ )
+);
+SQL
+  then
+    printf 'success' >"$output.status"
+  else
+    printf 'rejected' >"$output.status"
+  fi
+}
+
+run_customer_payment \
+  '60000000-0000-4000-8000-000000000044' \
+  '81000000-0000-4000-8000-000000000041' \
+  '30' "$tmpdir/payment-a" &
+payment_a=$!
+
+run_customer_payment \
+  '60000000-0000-4000-8000-000000000045' \
+  '81000000-0000-4000-8000-000000000042' \
+  '40' "$tmpdir/payment-b" &
+payment_b=$!
+
+wait "$payment_a"
+wait "$payment_b"
+
+if [[ "$(cat "$tmpdir/payment-a.status")" != "success" || "$(cat "$tmpdir/payment-b.status")" != "success" ]]; then
+  echo "Both concurrent customer payments should have succeeded."
+  cat "$tmpdir/payment-a.log" "$tmpdir/payment-b.log"
+  exit 1
+fi
+
+"${PSQL[@]}" <<'SQL'
+DO $concurrent_payment_check$
+DECLARE
+  v_debt NUMERIC(18,4);
+  v_paid NUMERIC(18,4);
+  v_remaining NUMERIC(18,4);
+  v_allocated NUMERIC(18,4);
+  v_payment_count INTEGER;
+  v_journal_count INTEGER;
+  v_processed_count INTEGER;
+  v_ledger_net NUMERIC(18,4);
+BEGIN
+  SELECT current_debt INTO v_debt FROM public.customers
+   WHERE id='90000000-0000-4000-8000-000000000010';
+  SELECT paid_amount,remaining_amount INTO v_paid,v_remaining FROM public.invoices
+   WHERE id='80000000-0000-4000-8000-000000000043';
+  SELECT COALESCE(SUM(allocated_amount),0) INTO v_allocated FROM public.payment_allocations
+   WHERE payment_id IN ('81000000-0000-4000-8000-000000000041',
+                        '81000000-0000-4000-8000-000000000042');
+  SELECT count(*) INTO v_payment_count FROM public.customer_payments
+   WHERE id IN ('81000000-0000-4000-8000-000000000041',
+                '81000000-0000-4000-8000-000000000042');
+  SELECT count(*) INTO v_journal_count FROM public.journal_entries
+   WHERE source_type='PAYMENT'
+     AND source_id IN ('81000000-0000-4000-8000-000000000041',
+                       '81000000-0000-4000-8000-000000000042');
+  SELECT count(*) INTO v_processed_count FROM public.processed_operations
+   WHERE operation_id IN ('60000000-0000-4000-8000-000000000044',
+                          '60000000-0000-4000-8000-000000000045');
+  SELECT COALESCE(SUM(amount),0) INTO v_ledger_net FROM public.customer_ledgers
+   WHERE customer_id='90000000-0000-4000-8000-000000000010';
+  IF v_debt IS DISTINCT FROM 30 OR v_paid IS DISTINCT FROM 70
+     OR v_remaining IS DISTINCT FROM 30 OR v_allocated IS DISTINCT FROM 70
+     OR v_payment_count<>2 OR v_journal_count<>2 OR v_processed_count<>2
+     OR v_ledger_net IS DISTINCT FROM 30 THEN
+    RAISE EXCEPTION 'Concurrent payment invariant failed: debt %, invoice paid %, remaining %, allocations %, payments %, journals %, processed %, ledger net %',
+      v_debt,v_paid,v_remaining,v_allocated,v_payment_count,v_journal_count,v_processed_count,v_ledger_net;
+  END IF;
+  RAISE NOTICE 'PASS: concurrent customer payments serialize; debt, invoice allocations, ledger and journals reconcile';
+END
+$concurrent_payment_check$;
+SQL
