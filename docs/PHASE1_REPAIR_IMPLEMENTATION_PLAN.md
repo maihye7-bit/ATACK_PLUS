@@ -682,16 +682,31 @@ Only after approval may Part 3-D1/D2 code and test changes begin. SQL
 execution against a database remains a separate approval.
 
 
-### 19.7 Part 3-D1 preparation update — 2026-11-27
+### 19.7 Part 3-D1 preparation and execution results — 2026-11-27
 
-**Status:** Diagnostic artifact prepared; execution and database findings remain pending.
+**Status:** Read-only preflight executed successfully against the disposable PostgreSQL 16 database in GitHub Actions. This is CI-schema evidence only, not a catalog or data audit of the user's local, staging or production database.
 
-Added `tests/phase2-fk-catalog-preflight.sql` on `repair/verified-fixes`. The script is explicitly read-only and reports:
+Added `tests/phase2-fk-catalog-preflight.sql` and a dedicated step to `.github/workflows/sql-migrations-smoke.yml` on `repair/verified-fixes`. The script reports:
 - Every declared FK's source/target schema, table and ordered columns.
 - ON DELETE / ON UPDATE actions, deferrability, initial deferral and validation state.
 - Per-FK orphan-reference row counts.
 - Cross-store reference counts when both related tables expose `store_id` and the FK does not bind those store columns together.
 
-The script uses a read-only transaction and rolls it back. It does not create persistent objects or modify rows. It has **not** been executed or validated against PostgreSQL yet. The next action is a separate owner approval to execute it against an isolated local test database. No staging/production execution is authorized.
+**Execution evidence**
+- Workflow: SQL migration smoke test, run `46068143484`.
+- Commit SHA: `7682b5ad6141c49ff1cff5941f517ea64232d3f6`.
+- Result: completed / success; all preceding schema, migration and regression steps also completed successfully.
+- The catalog query returned **143 FK constraints**. All 143 were marked validated; all were non-deferrable and not initially deferred in this ephemeral schema.
+- **25 FK constraints** reported `ON DELETE CASCADE`. This count is by constraint, not by distinct parent-child table pair.
+- The catalog confirms that receipt-item and closure-item tables each have both a single-column parent FK and a composite same-store parent FK. Both constraints must be handled deliberately in any migration; neither may be accidentally dropped while changing delete actions.
+- The diagnostic emitted **zero orphan-reference rows** and **zero cross-store-reference rows** for all checks it performed in this CI database.
+- The read-only transaction ended with `ROLLBACK`; the diagnostic made no persistent database changes.
 
-The existing SQL CI workflow provisions an ephemeral PostgreSQL 16 service and applies the repository schema/migrations, but Part 3-D1 has not been added to that workflow and no CI run has been triggered for this diagnostic.
+**Interpretation and limitations**
+- The successful CI run validates that the diagnostic SQL parses and executes against the repository's fully applied PostgreSQL 16 test schema, and that the tested schema/data snapshot has no detected orphan or cross-store rows.
+- CI's disposable database is not the user's actual database. Its zero counts do not prove that local, staging or production data are clean.
+- The 143-row catalog is the actual catalog for this CI-applied schema. Before rollout, the same catalog comparison must be run against the intended target database under a separate explicit approval.
+- The 25 CASCADE constraints include business-history dependencies as well as store/system lifecycle and parent-owned detail relationships. Do not treat all 25 as one blanket replacement set; apply the classifications and exclusions in Sections 19.3 and 19.5.
+- This result completes the **CI execution portion of Part 3-D1 only**. It does not close the real-database drift/data preflight, approve an FK migration, or authorize staging/production changes.
+
+The CI step is present in the SQL migration workflow and must remain read-only. No SQL migration was applied to a persistent environment, and no merge to `main` occurred.
