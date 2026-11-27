@@ -14,6 +14,7 @@ DECLARE
   inv2 UUID := gen_random_uuid();
   pur1 UUID := gen_random_uuid();
   ret1 UUID := gen_random_uuid();
+  pret1 UUID := gen_random_uuid();
   adj1 UUID := gen_random_uuid();
   v_failed BOOLEAN;
 BEGIN
@@ -33,6 +34,8 @@ BEGIN
     (pur1,s1,'SS-PUR-A',sup1,NOW(),u1);
   INSERT INTO sales_returns(id,store_id,return_number,original_invoice_id,created_by) VALUES
     (ret1,s1,'SS-RET-A',inv1,u1);
+  INSERT INTO purchase_returns(id,store_id,return_number,original_purchase_id,created_by) VALUES
+    (pret1,s1,'SS-PRET-A',pur1,u1);
   INSERT INTO stock_adjustments(id,store_id,adjustment_number,product_id,adjustment_type,
     reason,quantity,unit_id,cost_per_unit,total_value,created_by)
   VALUES(adj1,s1,'SS-ADJ-A',p1,'INCREASE','same-store integrity test',1,'pcs',1,1,u1);
@@ -45,6 +48,7 @@ BEGIN
     (p1,'IN',1,'pcs',1,1,pur1,'purchase',u1),
     (p1,'ADJUSTMENT',1,'pcs',1,1,adj1,'adjustment',u1),
     (p1,'RETURN_IN',1,'pcs',1,1,ret1,'return',u1),
+    (p1,'RETURN_OUT',1,'pcs',1,1,pret1,'return',u1),
     (p1,'IN',1,'pcs',1,1,NULL,NULL,u1);
 
   -- A movement cannot attribute a product from store A to a user from store B.
