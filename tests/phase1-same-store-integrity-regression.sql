@@ -23,7 +23,7 @@ BEGIN
   INSERT INTO users(id,store_id,username,full_name) VALUES
     (u1,s1,'same_store_owner_a','Same Store Owner A'),
     (u2,s2,'same_store_owner_b','Same Store Owner B');
-  INSERT INTO suppliers(id,store_id,code,name) VALUES
+  INSERT INTO suppliers(id,store_id,code,name,current_debt) VALUES
     (sup1,s1,'SS-SUP-A','Same-store supplier A',100);
   INSERT INTO customers(id,store_id,code,name) VALUES (cust1,s1,'SS-CUS-A','Same-store customer A');
   INSERT INTO products(id,store_id,name,primary_unit_id) VALUES
