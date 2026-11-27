@@ -22,6 +22,12 @@ CREATE OR REPLACE FUNCTION public.validate_sync_device_store()
 RETURNS TRIGGER AS $$
 DECLARE v_device_store UUID;
 BEGIN
+  IF TG_TABLE_NAME='sync_outbox' AND (
+       NULLIF(NEW.record_json->>'id','')::UUID IS DISTINCT FROM NEW.record_uuid
+       OR NULLIF(NEW.record_json->>'store_id','')::UUID IS DISTINCT FROM NEW.store_id
+  ) THEN
+    RAISE EXCEPTION 'Outbox payload identity must match its store and record key';
+  END IF;
   IF NEW.device_id IS NULL OR NULLIF(btrim(NEW.device_id),'') IS NULL THEN
     IF TG_TABLE_NAME='audit_logs' THEN RETURN NEW; END IF;
     RAISE EXCEPTION 'A registered device ID is required for %',TG_TABLE_NAME;
@@ -66,6 +72,55 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp;
 
+CREATE OR REPLACE FUNCTION public.resolve_sync_entity_store(p_table_name TEXT,p_record_uuid UUID)
+RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp
+AS $
+DECLARE v_store UUID;
+BEGIN
+  CASE p_table_name
+    WHEN 'stores' THEN SELECT id INTO v_store FROM public.stores WHERE id=p_record_uuid;
+    WHEN 'categories' THEN SELECT store_id INTO v_store FROM public.categories WHERE id=p_record_uuid;
+    WHEN 'brands' THEN SELECT store_id INTO v_store FROM public.brands WHERE id=p_record_uuid;
+    WHEN 'products' THEN SELECT store_id INTO v_store FROM public.products WHERE id=p_record_uuid;
+    WHEN 'customers' THEN SELECT store_id INTO v_store FROM public.customers WHERE id=p_record_uuid;
+    WHEN 'suppliers' THEN SELECT store_id INTO v_store FROM public.suppliers WHERE id=p_record_uuid;
+    WHEN 'purchases' THEN SELECT store_id INTO v_store FROM public.purchases WHERE id=p_record_uuid;
+    WHEN 'invoices' THEN SELECT store_id INTO v_store FROM public.invoices WHERE id=p_record_uuid;
+    WHEN 'sales_returns' THEN SELECT store_id INTO v_store FROM public.sales_returns WHERE id=p_record_uuid;
+    WHEN 'expenses' THEN SELECT store_id INTO v_store FROM public.expenses WHERE id=p_record_uuid;
+    WHEN 'revenues' THEN SELECT store_id INTO v_store FROM public.revenues WHERE id=p_record_uuid;
+    WHEN 'purchase_returns' THEN SELECT store_id INTO v_store FROM public.purchase_returns WHERE id=p_record_uuid;
+    WHEN 'stock_adjustments' THEN SELECT store_id INTO v_store FROM public.stock_adjustments WHERE id=p_record_uuid;
+    WHEN 'inventory_batches' THEN SELECT store_id INTO v_store FROM public.inventory_batches WHERE id=p_record_uuid;
+    WHEN 'stock_alerts' THEN SELECT store_id INTO v_store FROM public.stock_alerts WHERE id=p_record_uuid;
+    WHEN 'chart_of_accounts' THEN SELECT store_id INTO v_store FROM public.chart_of_accounts WHERE id=p_record_uuid;
+    WHEN 'journal_entries' THEN SELECT store_id INTO v_store FROM public.journal_entries WHERE id=p_record_uuid;
+    WHEN 'general_ledger' THEN SELECT store_id INTO v_store FROM public.general_ledger WHERE id=p_record_uuid;
+    WHEN 'purchase_receipts' THEN SELECT store_id INTO v_store FROM public.purchase_receipts WHERE id=p_record_uuid;
+    WHEN 'purchase_receipt_items' THEN SELECT store_id INTO v_store FROM public.purchase_receipt_items WHERE id=p_record_uuid;
+    WHEN 'purchase_closures' THEN SELECT store_id INTO v_store FROM public.purchase_closures WHERE id=p_record_uuid;
+    WHEN 'purchase_closure_items' THEN SELECT store_id INTO v_store FROM public.purchase_closure_items WHERE id=p_record_uuid;
+    WHEN 'purchase_amendments' THEN SELECT store_id INTO v_store FROM public.purchase_amendments WHERE id=p_record_uuid;
+    WHEN 'tombstones' THEN SELECT store_id INTO v_store FROM public.tombstones WHERE id=p_record_uuid;
+    WHEN 'stock' THEN SELECT p.store_id INTO v_store FROM public.stock x JOIN public.products p ON p.id=x.product_id WHERE x.id=p_record_uuid;
+    WHEN 'stock_movements' THEN SELECT p.store_id INTO v_store FROM public.stock_movements x JOIN public.products p ON p.id=x.product_id WHERE x.id=p_record_uuid;
+    WHEN 'product_units' THEN SELECT p.store_id INTO v_store FROM public.product_units x JOIN public.products p ON p.id=x.product_id WHERE x.id=p_record_uuid;
+    WHEN 'purchase_items' THEN SELECT p.store_id INTO v_store FROM public.purchase_items x JOIN public.purchases p ON p.id=x.purchase_id WHERE x.id=p_record_uuid;
+    WHEN 'invoice_items' THEN SELECT i.store_id INTO v_store FROM public.invoice_items x JOIN public.invoices i ON i.id=x.invoice_id WHERE x.id=p_record_uuid;
+    WHEN 'return_items' THEN SELECT r.store_id INTO v_store FROM public.return_items x JOIN public.sales_returns r ON r.id=x.return_id WHERE x.id=p_record_uuid;
+    WHEN 'purchase_return_items' THEN SELECT r.store_id INTO v_store FROM public.purchase_return_items x JOIN public.purchase_returns r ON r.id=x.return_id WHERE x.id=p_record_uuid;
+    WHEN 'customer_payments' THEN SELECT c.store_id INTO v_store FROM public.customer_payments x JOIN public.customers c ON c.id=x.customer_id WHERE x.id=p_record_uuid;
+    WHEN 'customer_ledgers' THEN SELECT c.store_id INTO v_store FROM public.customer_ledgers x JOIN public.customers c ON c.id=x.customer_id WHERE x.id=p_record_uuid;
+    WHEN 'supplier_payments' THEN SELECT s.store_id INTO v_store FROM public.supplier_payments x JOIN public.suppliers s ON s.id=x.supplier_id WHERE x.id=p_record_uuid;
+    WHEN 'supplier_ledger' THEN SELECT s.store_id INTO v_store FROM public.supplier_ledger x JOIN public.suppliers s ON s.id=x.supplier_id WHERE x.id=p_record_uuid;
+    WHEN 'payment_allocations' THEN SELECT i.store_id INTO v_store FROM public.payment_allocations x JOIN public.invoices i ON i.id=x.invoice_id WHERE x.id=p_record_uuid;
+    ELSE RAISE EXCEPTION 'Table % is not enabled for sync conflict identity validation',p_table_name;
+  END CASE;
+  RETURN v_store;
+END;
+$;
+
 CREATE OR REPLACE FUNCTION public.validate_sync_conflict_store_payload()
 RETURNS TRIGGER AS $$
 DECLARE v_target_store UUID;
@@ -84,12 +139,9 @@ BEGIN
       AND NULLIF(NEW.remote_record_json->>'id','')::UUID IS DISTINCT FROM NEW.record_uuid) THEN
     RAISE EXCEPTION 'Sync conflict snapshots must preserve the conflict record identity and store';
   END IF;
-  IF NEW.table_name IN ('categories','brands','products','customers','suppliers') THEN
-    EXECUTE format('SELECT store_id FROM public.%I WHERE id=$1 FOR SHARE',NEW.table_name)
-      INTO v_target_store USING NEW.record_uuid;
-    IF v_target_store IS NULL OR v_target_store IS DISTINCT FROM NEW.store_id THEN
-      RAISE EXCEPTION 'Sync conflict target must exist in the same store';
-    END IF;
+  v_target_store:=public.resolve_sync_entity_store(NEW.table_name,NEW.record_uuid);
+  IF v_target_store IS NULL OR v_target_store IS DISTINCT FROM NEW.store_id THEN
+    RAISE EXCEPTION 'Sync conflict target must exist in the same store';
   END IF;
   RETURN NEW;
 END;
