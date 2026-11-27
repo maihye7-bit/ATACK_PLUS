@@ -240,4 +240,14 @@ CREATE TRIGGER trg_guard_purchase_return_stock_movement_store
 BEFORE UPDATE OF store_id ON public.purchase_returns
 FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
+DROP TRIGGER IF EXISTS trg_guard_customer_dependents_store ON public.customers;
+CREATE TRIGGER trg_guard_customer_dependents_store
+BEFORE UPDATE OF store_id ON public.customers
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
+
+DROP TRIGGER IF EXISTS trg_guard_supplier_dependents_store ON public.suppliers;
+CREATE TRIGGER trg_guard_supplier_dependents_store
+BEFORE UPDATE OF store_id ON public.suppliers
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
+
 COMMIT;
