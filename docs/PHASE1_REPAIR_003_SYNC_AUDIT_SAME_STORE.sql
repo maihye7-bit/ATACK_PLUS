@@ -22,12 +22,13 @@ CREATE OR REPLACE FUNCTION public.validate_sync_device_store()
 RETURNS TRIGGER AS $$
 DECLARE v_device_store UUID;
 BEGIN
-  IF TG_TABLE_NAME='sync_outbox' AND (
-       NULLIF(NEW.record_json->>'id','')::UUID IS DISTINCT FROM NEW.record_uuid
-       OR NULLIF(NEW.record_json->>'store_id','')::UUID IS DISTINCT FROM NEW.store_id
-  ) THEN
-    RAISE EXCEPTION 'Outbox payload identity must match its store and record key';
+  IF TG_TABLE_NAME='sync_outbox' THEN
+    IF NULLIF(NEW.record_json->>'id','')::UUID IS DISTINCT FROM NEW.record_uuid
+       OR NULLIF(NEW.record_json->>'store_id','')::UUID IS DISTINCT FROM NEW.store_id THEN
+      RAISE EXCEPTION 'Outbox payload identity must match its store and record key';
+    END IF;
   END IF;
+
   IF NEW.device_id IS NULL OR NULLIF(btrim(NEW.device_id),'') IS NULL THEN
     IF TG_TABLE_NAME='audit_logs' THEN RETURN NEW; END IF;
     RAISE EXCEPTION 'A registered device ID is required for %',TG_TABLE_NAME;
