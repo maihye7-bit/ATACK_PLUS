@@ -90,6 +90,21 @@ BEGIN
   END;
   IF NOT v_failed THEN RAISE EXCEPTION 'Mismatched stock movement reference type was accepted'; END IF;
 
+  -- Existing movement history makes parent store reassignment unsafe.
+  v_failed := FALSE;
+  BEGIN
+    UPDATE products SET store_id=s2 WHERE id=p1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Product store reassignment with movement history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE users SET store_id=s2 WHERE id=u1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'User store reassignment with movement history was accepted'; END IF;
+
   RAISE NOTICE 'PASS: same-store stock movement references, cross-store rejection and NULL contract';
 END
 $same_store_test$;
