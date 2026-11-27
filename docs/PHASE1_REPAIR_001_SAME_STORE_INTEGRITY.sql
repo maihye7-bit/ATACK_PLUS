@@ -4,10 +4,18 @@
 BEGIN;
 
 DO $precondition$
+DECLARE
+  v_required TEXT[] := ARRAY[
+    'stock_adjustments','purchase_returns','purchase_return_items',
+    'inventory_batches','purchase_receipts','purchase_receipt_items'
+  ];
+  v_table TEXT;
 BEGIN
-  IF to_regclass('public.stock_adjustments') IS NULL THEN
-    RAISE EXCEPTION 'stock_adjustments must exist before applying same-store integrity repair 001';
-  END IF;
+  FOREACH v_table IN ARRAY v_required LOOP
+    IF to_regclass('public.' || v_table) IS NULL THEN
+      RAISE EXCEPTION 'Required table public.% is missing; apply the Phase 3 business extensions first', v_table;
+    END IF;
+  END LOOP;
   IF to_regprocedure('public.validate_same_store_references()') IS NULL THEN
     RAISE EXCEPTION 'base validate_same_store_references() function is missing';
   END IF;
