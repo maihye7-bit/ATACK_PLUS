@@ -347,7 +347,11 @@ REVOKE ALL ON FUNCTION public.apply_outbox_operation(UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.create_outbox_entry(UUID,TEXT,TEXT,TEXT,UUID,UUID,JSONB) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.apply_outbox_operation(UUID) TO authenticated, service_role;
 
--- Soft delete is a store-authorized state transition plus a durable tombstone.
+-- Keep the lifecycle state available on upgraded databases as well as clean installs.
+ALTER TABLE public.brands
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Soft delete is a store-authorized, idempotent state transition plus a durable tombstone.
 CREATE OR REPLACE FUNCTION public.soft_delete_record(
     p_table_name TEXT, p_record_uuid UUID, p_store_id UUID, p_deleted_by UUID
 ) RETURNS VOID
@@ -357,6 +361,7 @@ DECLARE
     v_permission TEXT;
     v_old JSONB;
     v_new JSONB;
+    v_existing_tombstone public.tombstones%ROWTYPE;
 BEGIN
     IF auth.uid() IS NULL OR p_store_id IS DISTINCT FROM public.current_user_store_id() THEN
         RAISE EXCEPTION 'Authenticated store membership required';
@@ -379,19 +384,30 @@ BEGIN
         RAISE EXCEPTION 'Permission denied for soft delete';
     END IF;
 
+    -- Serialize repeated calls for the same live row before inspecting its tombstone.
     EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE t.id=$1 AND t.store_id=$2 FOR UPDATE',p_table_name)
        INTO v_old USING p_record_uuid,p_store_id;
     IF v_old IS NULL THEN RAISE EXCEPTION 'Delete target not found in this store'; END IF;
 
-    INSERT INTO public.tombstones(store_id,table_name,record_uuid,deleted_by)
-    VALUES(p_store_id,p_table_name,p_record_uuid,v_user_id)
-    ON CONFLICT (table_name,record_uuid) DO NOTHING;
-    IF NOT EXISTS (
-        SELECT 1 FROM public.tombstones t
-         WHERE t.table_name=p_table_name AND t.record_uuid=p_record_uuid AND t.store_id=p_store_id
-    ) THEN
-        RAISE EXCEPTION 'Tombstone identity belongs to another store';
+    SELECT * INTO v_existing_tombstone
+      FROM public.tombstones
+     WHERE table_name=p_table_name AND record_uuid=p_record_uuid
+     FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing_tombstone.store_id IS DISTINCT FROM p_store_id THEN
+            RAISE EXCEPTION 'Tombstone identity belongs to another store';
+        END IF;
+        -- An existing tombstone plus a deleted row is a completed operation: no new
+        -- audit row, live-row UPDATE, or change-log event is emitted on replay.
+        IF COALESCE((v_old->>'is_active')::BOOLEAN,TRUE)=FALSE
+           AND (p_table_name<>'products' OR NULLIF(v_old->>'deleted_at','') IS NOT NULL) THEN
+            RETURN;
+        END IF;
+        RAISE EXCEPTION 'Existing tombstone conflicts with an active or incomplete record state';
     END IF;
+
+    INSERT INTO public.tombstones(store_id,table_name,record_uuid,deleted_by)
+    VALUES(p_store_id,p_table_name,p_record_uuid,v_user_id);
 
     IF p_table_name='products' THEN
         EXECUTE 'UPDATE public.products SET is_active=FALSE, deleted_at=COALESCE(deleted_at,NOW()) WHERE id=$1 AND store_id=$2'
