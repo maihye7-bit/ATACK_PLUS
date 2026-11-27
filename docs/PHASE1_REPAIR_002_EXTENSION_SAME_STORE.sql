@@ -104,7 +104,7 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.purchase_receipt_items'::regclass AND conname='fk_purchase_receipt_items_receipt_store') THEN
     ALTER TABLE public.purchase_receipt_items ADD CONSTRAINT fk_purchase_receipt_items_receipt_store
-      FOREIGN KEY(receipt_id,store_id) REFERENCES public.purchase_receipts(id,store_id);
+      FOREIGN KEY(receipt_id,store_id) REFERENCES public.purchase_receipts(id,store_id) ON DELETE CASCADE;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.purchase_receipt_items'::regclass AND conname='fk_purchase_receipt_items_original_product_store') THEN
     ALTER TABLE public.purchase_receipt_items ADD CONSTRAINT fk_purchase_receipt_items_original_product_store
@@ -124,7 +124,7 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.purchase_closure_items'::regclass AND conname='fk_purchase_closure_items_closure_store') THEN
     ALTER TABLE public.purchase_closure_items ADD CONSTRAINT fk_purchase_closure_items_closure_store
-      FOREIGN KEY(closure_id,store_id) REFERENCES public.purchase_closures(id,store_id);
+      FOREIGN KEY(closure_id,store_id) REFERENCES public.purchase_closures(id,store_id) ON DELETE CASCADE;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.purchase_amendments'::regclass AND conname='fk_purchase_amendments_purchase_store') THEN
     ALTER TABLE public.purchase_amendments ADD CONSTRAINT fk_purchase_amendments_purchase_store
@@ -620,5 +620,171 @@ FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents(
 DROP TRIGGER IF EXISTS trg_guard_purchase_receipt_item_store ON public.purchase_receipt_items;
 CREATE TRIGGER trg_guard_purchase_receipt_item_store BEFORE UPDATE OF store_id ON public.purchase_receipt_items
 FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
+
+-- Validate legacy generic references that cannot be represented by a composite FK.
+DO $same_store_preflight$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.stock_movements sm
+    JOIN public.products p ON p.id=sm.product_id
+    JOIN public.users u ON u.id=sm.user_id
+    WHERE p.store_id IS DISTINCT FROM u.store_id
+       OR ((sm.reference_type IS NULL) <> (sm.reference_id IS NULL))
+       OR (sm.reference_type='invoice' AND NOT EXISTS
+           (SELECT 1 FROM public.invoices i WHERE i.id=sm.reference_id AND i.store_id=p.store_id))
+       OR (sm.reference_type='purchase' AND NOT EXISTS
+           (SELECT 1 FROM public.purchases pu WHERE pu.id=sm.reference_id AND pu.store_id=p.store_id))
+       OR (sm.reference_type='adjustment' AND NOT EXISTS
+           (SELECT 1 FROM public.stock_adjustments sa WHERE sa.id=sm.reference_id AND sa.store_id=p.store_id))
+       OR (sm.reference_type='return' AND (
+           (SELECT COUNT(*) FROM public.sales_returns sr WHERE sr.id=sm.reference_id) +
+           (SELECT COUNT(*) FROM public.purchase_returns pr WHERE pr.id=sm.reference_id) <> 1
+           OR NOT EXISTS (
+             SELECT 1 FROM public.sales_returns sr WHERE sr.id=sm.reference_id AND sr.store_id=p.store_id
+             UNION ALL
+             SELECT 1 FROM public.purchase_returns pr WHERE pr.id=sm.reference_id AND pr.store_id=p.store_id
+           )))
+  ) THEN RAISE EXCEPTION 'Existing stock_movements contain cross-store or invalid source references'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.purchase_receipt_items pri
+    JOIN public.purchase_receipts pr ON pr.id=pri.receipt_id
+    JOIN public.purchase_items pi ON pi.id=pri.purchase_item_id
+    JOIN public.purchases pu ON pu.id=pi.purchase_id
+    JOIN public.products op ON op.id=pri.original_product_id
+    JOIN public.products ap ON ap.id=pri.actual_product_id
+    WHERE pri.store_id IS DISTINCT FROM pr.store_id
+       OR pr.purchase_id IS DISTINCT FROM pi.purchase_id
+       OR pu.store_id IS DISTINCT FROM pri.store_id
+       OR pi.product_id IS DISTINCT FROM pri.original_product_id
+       OR op.store_id IS DISTINCT FROM pri.store_id
+       OR ap.store_id IS DISTINCT FROM pri.store_id
+  ) THEN RAISE EXCEPTION 'Existing purchase_receipt_items contain cross-store or mismatched purchase lines'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.purchase_closure_items ci
+    JOIN public.purchase_closures pc ON pc.id=ci.closure_id
+    JOIN public.purchase_items pi ON pi.id=ci.purchase_item_id
+    JOIN public.purchases pu ON pu.id=pi.purchase_id
+    WHERE ci.store_id IS DISTINCT FROM pc.store_id
+       OR pu.store_id IS DISTINCT FROM ci.store_id
+       OR pi.purchase_id IS DISTINCT FROM pc.purchase_id
+  ) THEN RAISE EXCEPTION 'Existing purchase_closure_items contain cross-store or mismatched purchase lines'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.purchase_return_items pri
+    JOIN public.purchase_returns pr ON pr.id=pri.return_id
+    JOIN public.products p ON p.id=pri.product_id
+    LEFT JOIN public.purchase_items pi ON pi.id=pri.purchase_item_id
+    LEFT JOIN public.purchase_receipt_items rci ON rci.id=pri.purchase_receipt_item_id
+    LEFT JOIN public.purchase_receipts rc ON rc.id=rci.receipt_id
+    WHERE p.store_id IS DISTINCT FROM pr.store_id
+       OR (pri.purchase_item_id IS NOT NULL AND
+           (pi.id IS NULL OR pi.purchase_id IS DISTINCT FROM pr.original_purchase_id
+            OR (pri.purchase_receipt_item_id IS NULL AND pi.product_id IS DISTINCT FROM pri.product_id)))
+       OR (pri.purchase_receipt_item_id IS NOT NULL AND
+           (rci.id IS NULL OR rc.purchase_id IS DISTINCT FROM pr.original_purchase_id
+            OR rc.store_id IS DISTINCT FROM pr.store_id
+            OR rci.actual_product_id IS DISTINCT FROM pri.product_id
+            OR (pri.purchase_item_id IS NOT NULL AND rci.purchase_item_id IS DISTINCT FROM pri.purchase_item_id)))
+  ) THEN RAISE EXCEPTION 'Existing purchase_return_items contain cross-store or mismatched source lines'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.return_items ri
+    JOIN public.sales_returns sr ON sr.id=ri.return_id
+    JOIN public.products p ON p.id=ri.product_id
+    LEFT JOIN public.invoice_items ii ON ii.id=ri.invoice_item_id
+    WHERE p.store_id IS DISTINCT FROM sr.store_id
+       OR (ri.invoice_item_id IS NOT NULL AND
+           (ii.id IS NULL OR ii.invoice_id IS DISTINCT FROM sr.original_invoice_id
+            OR ii.product_id IS DISTINCT FROM ri.product_id))
+  ) THEN RAISE EXCEPTION 'Existing return_items contain cross-store or mismatched invoice lines'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.customer_ledgers cl
+    WHERE (cl.type='SALE' AND NOT EXISTS
+             (SELECT 1 FROM public.invoices i WHERE i.id=cl.reference_id AND i.type='SALE' AND i.customer_id=cl.customer_id))
+       OR (cl.type='PAYMENT' AND NOT EXISTS
+             (SELECT 1 FROM public.customer_payments cp WHERE cp.id=cl.reference_id AND cp.customer_id=cl.customer_id))
+       OR (cl.type='RETURN' AND NOT EXISTS
+             (SELECT 1 FROM public.sales_returns sr JOIN public.invoices i ON i.id=sr.original_invoice_id
+               WHERE sr.id=cl.reference_id AND i.customer_id=cl.customer_id))
+       OR (cl.type='ADJUSTMENT' AND cl.reference_id IS NOT NULL)
+  ) THEN RAISE EXCEPTION 'Existing customer_ledgers contain unmapped or mismatched source references'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.supplier_ledger sl
+    WHERE (sl.type='PURCHASE' AND NOT EXISTS
+             (SELECT 1 FROM public.purchases pu WHERE pu.id=sl.reference_id AND pu.supplier_id=sl.supplier_id))
+       OR (sl.type='PAYMENT' AND NOT EXISTS
+             (SELECT 1 FROM public.supplier_payments sp WHERE sp.id=sl.reference_id AND sp.supplier_id=sl.supplier_id))
+       OR (sl.type='RETURN' AND NOT EXISTS
+             (SELECT 1 FROM public.purchase_returns pr JOIN public.purchases pu ON pu.id=pr.original_purchase_id
+               WHERE pr.id=sl.reference_id AND pu.supplier_id=sl.supplier_id))
+       OR (sl.type='ADJUSTMENT' AND NOT EXISTS (
+             SELECT 1 FROM public.purchase_receipts pr JOIN public.purchases pu ON pu.id=pr.purchase_id
+              WHERE pr.id=sl.reference_id AND pu.supplier_id=sl.supplier_id
+             UNION ALL
+             SELECT 1 FROM public.purchase_closures pc JOIN public.purchases pu ON pu.id=pc.purchase_id
+              WHERE pc.id=sl.reference_id AND pu.supplier_id=sl.supplier_id
+             UNION ALL
+             SELECT 1 FROM public.purchase_amendments pa JOIN public.purchases pu ON pu.id=pa.purchase_id
+              WHERE pa.id=sl.reference_id AND pu.supplier_id=sl.supplier_id))
+  ) THEN RAISE EXCEPTION 'Existing supplier_ledger rows contain unmapped or mismatched source references'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.journal_entries je
+    LEFT JOIN LATERAL (
+      SELECT i.store_id FROM public.invoices i
+       WHERE je.source_type='SALE' AND i.id=je.source_id AND i.type='SALE'
+      UNION ALL
+      SELECT pu.store_id FROM public.purchases pu
+       WHERE je.source_type='PURCHASE' AND pu.id=je.source_id
+      UNION ALL
+      SELECT sr.store_id FROM public.sales_returns sr
+       WHERE je.source_type='RETURN' AND sr.id=je.source_id
+      UNION ALL
+      SELECT pr.store_id FROM public.purchase_returns pr
+       WHERE je.source_type='RETURN' AND pr.id=je.source_id
+      UNION ALL
+      SELECT c.store_id FROM public.customer_payments cp JOIN public.customers c ON c.id=cp.customer_id
+       WHERE je.source_type='PAYMENT' AND cp.id=je.source_id
+      UNION ALL
+      SELECT s.store_id FROM public.supplier_payments sp JOIN public.suppliers s ON s.id=sp.supplier_id
+       WHERE je.source_type='PAYMENT' AND sp.id=je.source_id
+      UNION ALL
+      SELECT e.store_id FROM public.expenses e
+       WHERE je.source_type='EXPENSE' AND e.id=je.source_id
+      UNION ALL
+      SELECT r.store_id FROM public.revenues r
+       WHERE je.source_type='REVENUE' AND r.id=je.source_id
+      UNION ALL
+      SELECT sa.store_id FROM public.stock_adjustments sa
+       WHERE je.source_type='ADJUSTMENT' AND sa.id=je.source_id
+      UNION ALL
+      SELECT pa.store_id FROM public.purchase_amendments pa
+       WHERE je.source_type='ADJUSTMENT' AND pa.id=je.source_id
+      UNION ALL
+      SELECT pc.store_id FROM public.purchase_closures pc
+       WHERE je.source_type='ADJUSTMENT' AND pc.id=je.source_id
+      UNION ALL
+      SELECT pr.store_id FROM public.purchase_receipts pr
+       WHERE je.source_type='TRANSFER' AND pr.id=je.source_id
+    ) src ON TRUE
+    WHERE (je.source_type IS NULL) <> (je.source_id IS NULL)
+       OR (je.source_type IS NOT NULL AND je.source_id IS NOT NULL
+           AND (src.store_id IS NULL OR src.store_id IS DISTINCT FROM je.store_id))
+  ) THEN RAISE EXCEPTION 'Existing journal_entries contain missing, cross-store or unsupported source references'; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.general_ledger gl
+    JOIN public.journal_entries je ON je.id=gl.journal_entry_id
+    WHERE (gl.reference_table IS NULL) <> (gl.reference_id IS NULL)
+       OR (je.source_type IS NOT NULL AND
+           (gl.reference_table IS DISTINCT FROM je.source_type OR gl.reference_id IS DISTINCT FROM je.source_id))
+       OR (je.source_type IS NULL AND (gl.reference_table IS NOT NULL OR gl.reference_id IS NOT NULL))
+  ) THEN RAISE EXCEPTION 'Existing general_ledger references do not match their journal source'; END IF;
+END
+$same_store_preflight$;
 
 COMMIT;
