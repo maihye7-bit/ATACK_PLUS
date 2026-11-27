@@ -24,7 +24,7 @@ INSERT INTO public.permissions(code,description) VALUES
  ('inventory.allow_negative','Authorize stock below zero with audit')
 ON CONFLICT(code) DO NOTHING;
 INSERT INTO public.role_permissions(role_id,permission_id)
-SELECT r.role_id,p.id FROM (VALUES('owner'),('admin')) r(role_id)
+SELECT r.role_id,p.id FROM (VALUES('owner')) r(role_id)
 JOIN public.permissions p ON p.code IN ('inventory.adjust','inventory.allow_negative')
 ON CONFLICT(role_id,permission_id) DO NOTHING;
 
