@@ -8,7 +8,7 @@ DO $legacy_assignment_preflight$
 DECLARE
   v_assignments TEXT;
 BEGIN
-  SELECT string_agg(format('%s=%s',ur.role_id,c.role_count),', ' ORDER BY ur.role_id)
+  SELECT string_agg(format('%s=%s',c.role_id,c.role_count),', ' ORDER BY c.role_id)
     INTO v_assignments
     FROM (
       SELECT ur.role_id,count(*) AS role_count
@@ -17,9 +17,7 @@ BEGIN
        WHERE u.is_active=TRUE
          AND ur.role_id IN ('admin','accountant','stock_keeper')
        GROUP BY ur.role_id
-    ) c
-    JOIN public.user_roles ur ON ur.role_id=c.role_id
-   GROUP BY ur.role_id;
+    ) c;
 
   IF v_assignments IS NOT NULL THEN
     RAISE EXCEPTION
