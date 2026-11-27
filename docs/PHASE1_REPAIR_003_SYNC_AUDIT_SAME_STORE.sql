@@ -75,7 +75,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp;
 CREATE OR REPLACE FUNCTION public.resolve_sync_entity_store(p_table_name TEXT,p_record_uuid UUID)
 RETURNS UUID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp
-AS $
+AS $$
 DECLARE v_store UUID;
 BEGIN
   CASE p_table_name
@@ -119,7 +119,9 @@ BEGIN
   END CASE;
   RETURN v_store;
 END;
-$;
+$$;
+
+REVOKE ALL ON FUNCTION public.resolve_sync_entity_store(TEXT,UUID) FROM PUBLIC, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.validate_sync_conflict_store_payload()
 RETURNS TRIGGER AS $$
