@@ -188,6 +188,19 @@ DECLARE
   r RECORD;
   v_target_store UUID;
 BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.sync_outbox so
+    WHERE NULLIF(so.record_json->>'id','')::UUID IS DISTINCT FROM so.record_uuid
+       OR NULLIF(so.record_json->>'store_id','')::UUID IS DISTINCT FROM so.store_id
+  ) THEN RAISE EXCEPTION 'Existing sync_outbox payloads do not match their record/store identity'; END IF;
+
+  FOR r IN SELECT store_id,table_name,record_uuid FROM public.sync_conflicts WHERE table_name<>'user_roles' LOOP
+    v_target_store:=public.resolve_sync_entity_store(r.table_name,r.record_uuid);
+    IF v_target_store IS NULL OR v_target_store IS DISTINCT FROM r.store_id THEN
+      RAISE EXCEPTION 'Existing sync conflict target %/% is missing or belongs to another store',r.table_name,r.record_uuid;
+    END IF;
+  END LOOP;
+
   FOR r IN SELECT store_id,table_name,record_uuid FROM public.tombstones LOOP
     IF r.table_name NOT IN ('categories','brands','products','customers','suppliers') THEN
       RAISE EXCEPTION 'Existing tombstone table % is outside the supported soft-delete allowlist',r.table_name;
