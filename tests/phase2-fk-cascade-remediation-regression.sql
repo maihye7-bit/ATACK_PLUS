@@ -7,6 +7,7 @@ DECLARE
   e record;
   v_actual record;
   v_join text;
+  v_join_delete text;
   v_has_child boolean;
   v_blocked boolean;
   v_delete_sql text;
@@ -74,9 +75,11 @@ BEGIN
     ) INTO v_has_child;
 
     IF v_has_child THEN
+      -- The subquery uses p2, not the outer DELETE alias p.
+      v_join_delete:=replace(v_join,'p.','p2.');
       v_delete_sql:=format(
         'DELETE FROM public.%I p WHERE p.ctid=(SELECT p2.ctid FROM public.%I p2 JOIN public.%I c ON %s LIMIT 1)',
-        e.referenced_table,e.referenced_table,e.source_table,v_join
+        e.referenced_table,e.referenced_table,e.source_table,v_join_delete
       );
       v_blocked:=FALSE;
       BEGIN
