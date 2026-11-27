@@ -113,6 +113,12 @@ Tasks:
 - Review `ON DELETE CASCADE` on historical business data.
 - Prevent normal application roles from physically deleting history-bearing records.
 - Define whether child tables sync independently and whether parent tombstones imply local child cleanup.
+
+**Current lifecycle safety rule (2026-11-27; Stage 2 remains open):**
+- A record with a tombstone is considered soft-deleted and remains inactive.
+- Generic Outbox updates and generic conflict resolution must not reactivate a tombstoned record.
+- There is no Restore RPC in the current contract. Restoration is not supported until a separate, explicitly approved workflow defines its permissions, audit event, tombstone/change-log semantics, and client synchronization behavior.
+- This is a safety restriction, not a claim that all entity-specific deletion/retention and cascade requirements in Stage 2 are complete.
 - Test parent/nested cascades and actual `trg_log_change` behavior.
 
 Tests:
