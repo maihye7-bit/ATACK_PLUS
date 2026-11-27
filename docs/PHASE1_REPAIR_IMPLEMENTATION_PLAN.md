@@ -487,3 +487,196 @@ the source of truth.
 **Next:** Part 3-B — build the exact FK-by-FK CASCADE classification and
 remediation matrix, including child change-log and independent sync
 requirements.
+
+## 19. Stage 2 — Part 3-C: FK cascade remediation plan (2026-11-27)
+
+**Status:** Detailed remediation plan prepared after the Part 3-B static audit.
+This is a planning/documentation step only. It does not authorize SQL edits,
+migration execution, live database changes, CI claims, or deployment. The
+owner must approve the proposed implementation scope separately.
+
+### 19.1 Scope and source-of-truth rules
+
+1. Protect business, financial, inventory, return, audit and synchronization
+   history in accordance with the approved Part 3-A retention policy.
+2. Inspect the base schema, Phase 1 same-store migrations, Phase 3 table
+   creation files, later constraint alterations, triggers, RPCs, RLS/grants,
+   Change Log/Pull contracts and tests together.
+3. Treat the actual deployed PostgreSQL catalog as authoritative for a
+   deployment decision. SQL files are intended-state evidence only; they do
+   not prove that all migrations were applied in a given environment.
+4. Before implementation, capture every FK's schema, table, constraint name,
+   ordered source columns, referenced table/columns, delete action, update
+   action, deferrability, validation state and supporting indexes from
+   pg_constraint/pg_class/pg_attribute. Compare that catalog with the
+   repository's intended schema and report drift.
+5. Do not change store-level/system lifecycle relationships as a side effect
+   of business-history hardening.
+
+### 19.2 Confirmed CASCADE inventory and proposed treatment
+
+The following inventory is based on the repository SQL reviewed for Part 3-B.
+Constraint names must be resolved from the target catalog before migration;
+do not assume generated names or silently drop similarly named constraints.
+
+| Parent -> child | Current declared CASCADE | Proposed treatment | Rationale |
+|---|---|---|---|
+| stores -> devices | store_id | Separate store/system lifecycle review; retain only under an explicitly approved store purge workflow | Device retirement and sync evidence must not be casually erased |
+| stores -> users | store_id | Separate store/system lifecycle review; no change in this business FK pass | User identity and attribution history |
+| stores -> categories | store_id | Separate store/system lifecycle review | Master data belongs to store, but store purge is exceptional |
+| stores -> brands | store_id | Separate store/system lifecycle review | Master data belongs to store, but store purge is exceptional |
+| stores -> products | store_id | Separate store/system lifecycle review | Product and stock history retention |
+| stores -> customers | store_id | Separate store/system lifecycle review | Customer and financial history |
+| stores -> suppliers | store_id | Separate store/system lifecycle review | Supplier and financial history |
+| users -> user_roles | user_id | Review separately; preserve role/audit attribution or retire user instead of deleting | User lifecycle and auditability |
+| products -> product_units | product_id | Replace destructive parent deletion with restrictive behavior for ordinary lifecycle; retain only if a separately approved purge proves no history dependency | Unit identity/conversion context |
+| products -> stock | product_id | Replace with restrictive protection or explicitly designed inventory archival/purge handling | Current stock must not disappear as a side effect |
+| products -> purchase_items | product_id | Protect with RESTRICT/NO ACTION | Historical purchase line must remain interpretable |
+| products -> purchase_return_items | product_id | Protect with RESTRICT/NO ACTION | Historical purchase return must remain interpretable |
+| purchases -> purchase_items | purchase_id | Protect with RESTRICT/NO ACTION for committed purchases; any draft cleanup must be a distinct controlled workflow | Purchase line is business history |
+| suppliers -> supplier_ledger | supplier_id | Protect with RESTRICT/NO ACTION | Supplier ledger is financial history |
+| suppliers -> supplier_payments | supplier_id | Protect with RESTRICT/NO ACTION | Supplier payment is financial history |
+| invoices -> invoice_items | invoice_id | Protect with RESTRICT/NO ACTION for committed invoices | Sales line and price/quantity history |
+| invoices -> payment_allocations | invoice_id | Protect with RESTRICT/NO ACTION | Invoice-payment relationship is financial history |
+| customer_payments -> payment_allocations | payment_id | Protect with RESTRICT/NO ACTION | Payment allocation is financial history |
+| sales_returns -> return_items | return_id | Protect with RESTRICT/NO ACTION for committed returns | Return lines and stock effects |
+| purchase_returns -> purchase_return_items | return_id | Protect with RESTRICT/NO ACTION for committed returns | Return lines and supplier-credit/stock effects |
+| products -> purchase_return_items | product_id | Protect with RESTRICT/NO ACTION | Historical product reference in return |
+| purchase_receipts -> purchase_receipt_items | receipt_id (including same-store composite FK) | Parent-owned detail classification, but retain only inside an approved purge of an uncommitted/invalid receipt; otherwise restrict | Receipt item is dependent detail, yet receiving history can affect stock and purchase settlement |
+| purchase_closures -> purchase_closure_items | closure_id (including same-store composite FK) | Parent-owned detail classification, but retain only inside an approved purge of an uncommitted/invalid closure; otherwise restrict | Closure details explain purchase completion/remaining quantities |
+| stores -> store_sync_counters | store_id | Derived/system lifecycle; retain only for separately approved full-store purge | Counter is technical state, but store purge needs coordinated sync retirement |
+
+The source definitions also contain relationships that are not CASCADE and
+must remain protective unless a separately justified design is approved:
+for example purchases -> suppliers, customers -> customer_ledgers and
+customer_payments, products -> stock_movements, products -> invoice_items,
+products -> return_items, products -> stock_adjustments, products ->
+inventory_batches and products -> stock_alerts. The exact deployed actions
+must be confirmed from the catalog.
+
+### 19.3 Corrections to the preliminary Part 3-B interpretation
+
+1. The base CREATE TABLE definitions for customer_ledgers.customer_id and
+   customer_payments.customer_id do not declare CASCADE.
+2. purchases.supplier_id does not declare CASCADE.
+3. products.stock_movements, invoice_items and return_items references do
+   not declare CASCADE in the reviewed definitions.
+4. purchase_return_items has two distinct cascades: return_id -> 
+   purchase_returns and product_id -> products.
+5. purchase_receipt_items and purchase_closure_items receive CASCADE through
+   composite same-store FKs in Phase 1 Repair 002; these must be included
+   alongside their base single-column relationships.
+6. The schema's historical Foreign Keys Summary is not authoritative where
+   it differs from executable CREATE TABLE/ALTER TABLE statements.
+
+### 19.4 Change Log and audit remediation design
+
+The current trg_log_change() resolves store ownership for some child rows by
+querying their parent. During a parent-driven cascade, that lookup may no
+longer resolve the parent. The current function returns OLD without writing
+a DELETE change_log entry when v_store_id is NULL. This is a proven static
+code path, but actual trigger ordering and effects must be demonstrated in
+a PostgreSQL regression test before selecting the final implementation.
+
+Implementation design requirements:
+
+1. Make store ownership available without depending on a parent row that is
+   being deleted. Prefer a stable store_id on history-bearing child rows
+   where the data model supports it; otherwise use a carefully reviewed
+   OLD-row ownership resolver or a controlled parent-before-child deletion
+   workflow.
+2. Do not infer a store from an untrusted client payload. Ownership must be
+   validated against persisted rows and same-store constraints.
+3. For a child DELETE, the Change Log event must be atomic with the delete
+   and must carry the original child identity and sufficient old-state
+   information for the receiving client to remove/update its local record.
+4. Confirm whether tombstones are required for each independently synced
+   entity. Do not create duplicate or contradictory tombstone semantics
+   for cascade-generated child events.
+5. Review audit_business_row_change() separately: it is attached to selected
+   top-level entities, not every child table. Ensure parent-level audit
+   captures the business operation and child-level Change Log remains
+   complete without producing uncontrolled duplicate audit entries.
+6. Preserve transaction rollback: if required audit/change-log persistence
+   fails, the destructive operation must fail atomically.
+
+### 19.5 Proposed implementation sequence
+
+**Part 3-D1 — Catalog and drift preflight**
+- Add a read-only SQL diagnostic query for all FK metadata and delete actions.
+- Run it only against an isolated local test database after the owner approves
+  test execution; never against staging/production without separate approval.
+- Compare the output with the FK inventory above and resolve every mismatch.
+- Check existing rows for orphaned references and cross-store mismatches
+  before any constraint replacement.
+
+**Part 3-D2 — FK migration design**
+- Prepare a dedicated, ordered migration that changes only approved FK
+  delete actions.
+- Use exact catalog-resolved constraint names and verify source/target
+  columns before DROP/ADD.
+- Preserve composite same-store FKs, validation state, indexes and
+  deferrability. Do not accidentally remove the single-column integrity
+  constraints or same-store protections.
+- Use RESTRICT/NO ACTION for history-bearing dependencies. Distinguish
+  committed business records from any explicitly approved draft cleanup.
+- Keep store/system lifecycle and user-role lifecycle out of this migration
+  unless separately approved.
+- Include preflight assertions and fail-fast checks; do not silently skip
+  missing or differently defined constraints.
+
+**Part 3-D3 — Change Log implementation**
+- Implement the approved ownership-resolution strategy.
+- Ensure parent/child deletion events are deterministic and ordered for
+  incremental sync.
+- Confirm Pull pagination/500-row behavior and cursor acknowledgement do
+  not skip or reorder cascade-generated events.
+- Confirm a client can process parent and child events idempotently even
+  when it has already received one of them.
+
+**Part 3-D4 — Regression and security tests**
+- Parent delete is rejected when protected history exists.
+- Soft deletion/deactivation continues to work and does not delete children.
+- Explicitly approved draft/ephemeral cleanup affects only its intended
+  dependent rows.
+- Child Change Log DELETE event is emitted with correct store_id and record
+  UUID for every supported cascade path.
+- Pull returns the child event; ACK advances only after the expected event
+  has been delivered.
+- Failed audit/change-log insertion rolls back the entire operation.
+- Two concurrent delete attempts cannot produce partial or duplicate state.
+- Cross-store references remain rejected.
+- Authenticated users cannot bypass the approved RPC/security model with
+  direct DML.
+- Existing purchase, sales, return, stock, ledger and accounting regression
+  suites remain green.
+
+**Part 3-D5 — CI and acceptance**
+- Run SQL migration smoke and Supabase Auth integration workflows on the
+  repair branch.
+- Inspect workflow jobs and logs, not only the top-level run status.
+- Record exact commit SHA, workflow run IDs, test names and results.
+- Restore-test a backup in an isolated clean database before any managed
+  environment rollout.
+- Staging and production application remain separate decisions requiring
+  explicit approval.
+
+### 19.6 Acceptance gates for the implementation
+
+Part 3-D cannot be considered complete until all of the following are
+evidenced:
+
+- Actual FK catalog matches the approved migration preconditions.
+- Every history-bearing CASCADE has been removed or proven safe under a
+  separately approved purge-only workflow.
+- Store/system lifecycle relationships have not been changed accidentally.
+- Child delete Change Log behavior is proven by executable PostgreSQL tests.
+- Pull/ACK behavior is proven with multi-table and multi-device regression.
+- Rollback, concurrency, same-store integrity, RLS/grants and business
+  regressions pass.
+- CI passes on the exact repair-branch HEAD.
+- No staging/production migration is implied by branch CI success.
+
+**Next decision:** owner approval of this plan and its implementation scope.
+Only after approval may Part 3-D1/D2 code and test changes begin. SQL
+execution against a database remains a separate approval.
