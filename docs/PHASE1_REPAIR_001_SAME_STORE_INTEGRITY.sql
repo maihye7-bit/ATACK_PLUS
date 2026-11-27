@@ -123,34 +123,83 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
-CREATE OR REPLACE FUNCTION public.prevent_store_reassignment_with_stock_movements()
+CREATE OR REPLACE FUNCTION public.prevent_store_reassignment_with_dependents()
 RETURNS TRIGGER AS $$
 DECLARE
-    v_has_movements BOOLEAN := FALSE;
+    v_has_dependents BOOLEAN := FALSE;
 BEGIN
-    IF NEW.store_id IS NOT DISTINCT FROM OLD.store_id THEN
-        RETURN NEW;
-    END IF;
+    IF NEW.store_id IS NOT DISTINCT FROM OLD.store_id THEN RETURN NEW; END IF;
+
     CASE TG_TABLE_NAME
       WHEN 'products' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE product_id = OLD.id) INTO v_has_movements;
+        SELECT
+          EXISTS (SELECT 1 FROM public.stock WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.stock_movements WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.invoice_items WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.purchase_items WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.return_items WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.product_units WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.stock_adjustments WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.purchase_return_items WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.inventory_batches WHERE product_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.purchase_receipt_items WHERE original_product_id=OLD.id OR actual_product_id=OLD.id)
+        INTO v_has_dependents;
       WHEN 'users' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE user_id = OLD.id) INTO v_has_movements;
+        SELECT
+          EXISTS (SELECT 1 FROM public.stock_movements WHERE user_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.customer_payments WHERE created_by=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.customer_ledgers WHERE created_by=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.supplier_payments WHERE created_by=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.supplier_ledger WHERE created_by=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.user_roles WHERE user_id=OLD.id OR granted_by=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.stock_adjustments WHERE created_by=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.purchase_receipts WHERE received_by=OLD.id OR approved_by=OLD.id)
+        INTO v_has_dependents;
       WHEN 'invoices' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'invoice' AND reference_id = OLD.id) INTO v_has_movements;
+        SELECT
+          EXISTS (SELECT 1 FROM public.invoice_items WHERE invoice_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.payment_allocations WHERE invoice_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.sales_returns WHERE original_invoice_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type='invoice' AND reference_id=OLD.id)
+        INTO v_has_dependents;
       WHEN 'purchases' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'purchase' AND reference_id = OLD.id) INTO v_has_movements;
-      WHEN 'stock_adjustments' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'adjustment' AND reference_id = OLD.id) INTO v_has_movements;
+        SELECT
+          EXISTS (SELECT 1 FROM public.purchase_items WHERE purchase_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.purchase_returns WHERE original_purchase_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.purchase_receipts WHERE purchase_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type='purchase' AND reference_id=OLD.id)
+        INTO v_has_dependents;
       WHEN 'sales_returns' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'return' AND reference_id = OLD.id) INTO v_has_movements;
+        SELECT
+          EXISTS (SELECT 1 FROM public.return_items WHERE return_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type='return' AND reference_id=OLD.id)
+        INTO v_has_dependents;
       WHEN 'purchase_returns' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'return' AND reference_id = OLD.id) INTO v_has_movements;
+        SELECT
+          EXISTS (SELECT 1 FROM public.purchase_return_items WHERE return_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type='return' AND reference_id=OLD.id)
+        INTO v_has_dependents;
+      WHEN 'stock_adjustments' THEN
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements
+          WHERE reference_type='adjustment' AND reference_id=OLD.id)
+        INTO v_has_dependents;
+      WHEN 'customers' THEN
+        SELECT
+          EXISTS (SELECT 1 FROM public.customer_payments WHERE customer_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.customer_ledgers WHERE customer_id=OLD.id)
+        INTO v_has_dependents;
+      WHEN 'suppliers' THEN
+        SELECT
+          EXISTS (SELECT 1 FROM public.supplier_payments WHERE supplier_id=OLD.id) OR
+          EXISTS (SELECT 1 FROM public.supplier_ledger WHERE supplier_id=OLD.id)
+        INTO v_has_dependents;
       ELSE
-        RAISE EXCEPTION 'Unsupported parent table for stock movement ownership guard: %', TG_TABLE_NAME;
+        RAISE EXCEPTION 'Unsupported parent table for same-store ownership guard: %', TG_TABLE_NAME;
     END CASE;
-    IF v_has_movements THEN
-        RAISE EXCEPTION 'Cannot change store_id for % % after stock movements reference it', TG_TABLE_NAME, OLD.id;
+
+    IF v_has_dependents THEN
+      RAISE EXCEPTION 'Cannot change store_id for % % while dependent business records exist',
+        TG_TABLE_NAME, OLD.id;
     END IF;
     RETURN NEW;
 END;
@@ -159,36 +208,36 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 DROP TRIGGER IF EXISTS trg_guard_product_stock_movement_store ON public.products;
 CREATE TRIGGER trg_guard_product_stock_movement_store
 BEFORE UPDATE OF store_id ON public.products
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_stock_movements();
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
 DROP TRIGGER IF EXISTS trg_guard_user_stock_movement_store ON public.users;
 CREATE TRIGGER trg_guard_user_stock_movement_store
 BEFORE UPDATE OF store_id ON public.users
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_stock_movements();
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
 DROP TRIGGER IF EXISTS trg_guard_invoice_stock_movement_store ON public.invoices;
 CREATE TRIGGER trg_guard_invoice_stock_movement_store
 BEFORE UPDATE OF store_id ON public.invoices
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_stock_movements();
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
 DROP TRIGGER IF EXISTS trg_guard_purchase_stock_movement_store ON public.purchases;
 CREATE TRIGGER trg_guard_purchase_stock_movement_store
 BEFORE UPDATE OF store_id ON public.purchases
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_stock_movements();
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
 DROP TRIGGER IF EXISTS trg_guard_adjustment_stock_movement_store ON public.stock_adjustments;
 CREATE TRIGGER trg_guard_adjustment_stock_movement_store
 BEFORE UPDATE OF store_id ON public.stock_adjustments
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_stock_movements();
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
 DROP TRIGGER IF EXISTS trg_guard_sale_return_stock_movement_store ON public.sales_returns;
 CREATE TRIGGER trg_guard_sale_return_stock_movement_store
 BEFORE UPDATE OF store_id ON public.sales_returns
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_stock_movements();
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
 DROP TRIGGER IF EXISTS trg_guard_purchase_return_stock_movement_store ON public.purchase_returns;
 CREATE TRIGGER trg_guard_purchase_return_stock_movement_store
 BEFORE UPDATE OF store_id ON public.purchase_returns
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_stock_movements();
+FOR EACH ROW EXECUTE FUNCTION public.prevent_store_reassignment_with_dependents();
 
 COMMIT;
