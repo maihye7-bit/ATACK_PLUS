@@ -64,6 +64,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase1-same-store-integrity-regression.sql"
+      - name: Run same-store parent-child concurrency regression
+        env:
+          PGPASSWORD: postgres
+        run: bash tests/phase1-same-store-concurrency.sh
       - name: Apply business return logic repairs
         env:
           PGPASSWORD: postgres
