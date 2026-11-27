@@ -351,7 +351,7 @@ deployment or change the acceptance gates above.
 |---|---|---|---|
 | Stage 0 — Freeze and capture baseline | **Open / not evidenced as complete** | A repair branch exists. | The plan's complete baseline hashes, database inventory, verified backup and restore/readability evidence are not recorded as a completed G0 package. |
 | Stage 1 — Same-store referential integrity | **Implemented; automated SQL regression passed; G1 not fully closed** | Three migrations: `PHASE1_REPAIR_001_SAME_STORE_INTEGRITY.sql`, `PHASE1_REPAIR_002_EXTENSION_SAME_STORE.sql`, and `PHASE1_REPAIR_003_SYNC_AUDIT_SAME_STORE.sql`; regression scripts cover same-store references, extension references, sync/audit references and two-session parent/child concurrency. SQL migration workflow run `45995177555` completed successfully on commit `837f81e...`. | Complete relationship-matrix sign-off, review of legacy-data preflight against the intended staging dataset, and explicit staging acceptance remain open. The current Supabase Auth workflow does not apply these three repair migrations; therefore its successful run is not counted as Supabase Auth coverage for the Stage 1 repair migrations. |
-| Stage 2 — Soft deletion, tombstones and product retention | **Partial** | `ATACK_PLUS_PHASE3_SYNC_PUSH_HARDENING.sql` contains an authenticated, store-scoped `soft_delete_record` implementation with an entity allowlist, permission check, target-row lock, tombstone write, deactivation, product `deleted_at`, audit entry and tombstone change-log trigger. Generic Push rejects DELETE and directs callers to this RPC. | Idempotent repeat-delete behavior and audit-event semantics; direct physical DELETE grants/RLS for every history-bearing table; product history and FK cascade policy; parent/child delete propagation; tombstone identity invariant; SQLite parity; and dedicated regression coverage for these cases. The older F-03 description in the audit is historical and is superseded by the newer implementation, but the full G2 gate is not yet proven. |
+| Stage 2 — Soft deletion, tombstones and product retention | **Partial; Part 2 hardening CI-verified, G2 open** | Authenticated/store-scoped `soft_delete_record`; entity allowlist and permission checks; target-row locking; tombstone/deactivation/audit/change-log transaction; repeated-delete idempotency; rollback regression; two-session concurrency regression; master-table direct-DML privilege assertions; real JWT/PostgREST denial checks for direct category PATCH/DELETE and successful soft-delete RPC. SQL workflow `46057837513` and Supabase Auth workflow `46057837615` both completed PASS on branch HEAD `71c0eb0e6df1ac0c8850ec69b4068e70fc48ad05`. | Entity retention policy documentation; full physical-delete denial matrix for history-bearing entities; per-FK cascade classification and remediation; cascade child change-log/pull/offline replay proof; tombstone identity invariant; SQLite parity; and complete G2 acceptance. No managed staging/production SQL was applied. |
 | Stage 3 — Warehouses, stock and negative inventory | **Open / not closed** | Stock adjustment, receiving, returns and concurrent stock-operation code/tests exist in the Phase 2/3 business work. | These tests do not establish the Stage 3 requirements: store-owned multi-warehouse model and migration, D-016 permission-controlled negative stock, transfer lifecycle and reconciliation across all inventory write paths. |
 | Stage 4 — Device lifecycle and cursor integrity | **Partial** | Device/user security migrations and regression files exist, including `ATACK_PLUS_PHASE3_USER_ROLE_DEVICE_SECURITY.sql`, `ATACK_PLUS_PHASE3_USER_ACCOUNT_SECURITY.sql`, and their regression scripts. | Verify every pull, push and acknowledgement entry point against active/revoked device state; prove cursor FK/type/non-negative constraints and lifecycle behavior; close the complete G4 matrix. |
 | Stage 5 — Pull, acknowledgement and change-log contract | **Partial** | Sync hardening, Push/Outbox, cursor and sync regression files exist; the CI workflows execute multiple sync regression suites. | End-to-end proof of paging beyond 500 records, contiguous local apply/checkpoint behavior, failed-apply retry, acknowledgement meaning/bounds, and deterministic delete behavior for every independently synchronized table. |
@@ -383,11 +383,107 @@ deployment or change the acceptance gates above.
 
 ### 17.3 Current next step
 
-Continue with a focused Stage 2 audit and closure matrix: inspect physical
-DELETE permissions and cascades, repeated soft-delete behavior, product
-history retention, tombstone/change-log propagation and SQLite parity;
-then add or run only the missing targeted regressions. Do not repeat Stage
-1 implementation, do not skip ahead to Stage 3, and do not apply these
-migrations to managed staging or production without separate approval.
+Continue Stage 2 in order. Part 2 soft-delete idempotency, rollback,
+concurrency and selected direct-DML security checks are now recorded as
+CI-verified on branch HEAD
+`71c0eb0e6df1ac0c8850ec69b4068e70fc48ad05`. Part 3-A defines the
+entity-retention policy; Part 3-B must classify the actual foreign-key
+delete actions and their effects before any cascade migration is designed.
+Do not repeat Stage 1 implementation, do not skip ahead to Stage 3, and
+do not apply migrations to managed staging or production without separate
+approval.
 
 *End of proposed implementation plan.*
+
+
+## 18. Stage 2 — Part 3-A: approved entity-retention policy (2026-11-27)
+
+**Status:** Policy approved by the project owner; documentation update only.
+This section defines normal application behavior. It does not authorize
+schema changes, physical deletion, migration execution, or staging/
+production deployment.
+
+### 18.1 Core principles
+
+1. Business and financial history must not be erased by ordinary
+   application actions.
+2. Deactivation, cancellation/voiding, soft deletion and exceptional
+   physical purge are distinct operations and must not be conflated.
+3. A tombstoned entity remains inactive. Generic Outbox updates and
+   generic conflict resolution must not reactivate it.
+4. No Restore RPC is currently approved. Any future restoration flow
+   requires its own permissions, audit event, tombstone/change-log
+   semantics and client synchronization contract.
+5. Physical purge, if ever required, must be a separately approved
+   retention/maintenance workflow with dependency checks, verified
+   backup/restore capability, audit evidence and an explicit legal/
+   business retention basis.
+6. A foreign-key CASCADE is not, by itself, authorization to erase
+   business history. Every FK action must be assessed against this
+   policy and the ownership/lifecycle of the child record.
+
+### 18.2 Entity policy
+
+| Entity | Normal application behavior | Retention requirement |
+|---|---|---|
+| Products | Deactivate/soft-delete through the approved RPC; do not physically delete | Preserve purchase/sales references, returns, stock history, movements and traceability |
+| Product units | Do not remove while referenced by operational history | Preserve unit identity/conversion context needed to interpret historical lines |
+| Categories and brands | Deactivate/soft-delete | Preserve historical product classification references where present |
+| Customers | Deactivate/soft-delete | Preserve invoices, payments, allocations, returns, ledger and debt history |
+| Suppliers | Deactivate/soft-delete | Preserve purchases, receipts, returns, supplier payments, allocations and ledger history |
+| Sales invoices | Use controlled status transition, cancellation/voiding or correction workflow | Preserve invoice header, lines, payment relationships, returns and accounting effects |
+| Purchases | Use controlled status transition, closure or cancellation workflow | Preserve purchase header, lines, receipts, amendments, returns and supplier-accounting effects |
+| Invoice and purchase lines | No standalone destructive deletion after becoming part of a committed transaction | Preserve quantities, units, prices, costs, taxes and source relationships |
+| Sales and purchase returns | Use controlled correction/reversal workflow; no ordinary physical deletion | Preserve return header/lines and resulting stock, ledger and journal effects |
+| Customer and supplier payments | Correct/reverse through a documented financial operation; no ordinary physical deletion | Preserve payment identity, allocations and ledger effects |
+| Payment allocations | Modify only through validated payment-application/reversal operations | Preserve the relationship between payment and invoice and its audit trail |
+| Customer/supplier ledgers and journals | Correct through compensating/reversal entries, not destructive deletion | Preserve immutable financial history and source traceability |
+| Stock balances and stock movements | Change balances only through authorized inventory business operations | Preserve movement/adjustment/transfer history and the ability to reconcile balances |
+| Devices and sync metadata | Revoke/retire devices through lifecycle controls | Retain the audit and sync evidence required by the approved retention period |
+| Audit log and change log | No ordinary application deletion or mutation | Preserve evidence needed for traceability, security review and synchronization |
+
+### 18.3 Required distinctions
+
+- **Deactivate:** prevent future ordinary use while retaining the entity and
+  its references.
+- **Soft-delete:** mark an eligible master record inactive and create its
+  tombstone/audit/change-log evidence atomically.
+- **Cancel/void/reverse:** record a business-state transition and, where
+  necessary, compensating stock and financial entries; do not erase the
+  original transaction.
+- **Physical purge:** exceptional maintenance action only, never a
+  generic user-facing delete operation.
+
+### 18.4 CASCADE classification rule for Part 3-B
+
+Part 3-B must inspect each actual FK definition and classify it as one
+of:
+
+1. **History-protecting:** change to RESTRICT/NO ACTION where cascading
+   would erase a history-bearing or independently synchronized record.
+2. **Parent-owned detail:** CASCADE may remain only if the child is
+   exclusively owned by the parent, has no independent retention or
+   synchronization requirement, and purge is explicitly permitted.
+3. **Derived/ephemeral:** define whether the child is safely rebuildable
+   or may be purged, and prove that through tests before retaining
+   CASCADE.
+4. **Store/system lifecycle:** assess separately; do not change store
+   deletion or system-owned cascades as a side effect of business-record
+   hardening.
+
+No FK action is to be changed solely from its table name or from the
+summary section of the schema. The actual CREATE TABLE/constraint
+definition and dependent RPC, trigger, RLS, sync and test behavior are
+the source of truth.
+
+### 18.5 Acceptance conditions for Part 3-A
+
+- This policy is documented in the implementation plan.
+- The Stage 2 progress row and next-step note reflect the latest
+  verified Part 2 CI evidence without claiming G2 closure.
+- No SQL migration, live database change, frontend change or deployment
+  is part of Part 3-A.
+
+**Next:** Part 3-B — build the exact FK-by-FK CASCADE classification and
+remediation matrix, including child change-log and independent sync
+requirements.
