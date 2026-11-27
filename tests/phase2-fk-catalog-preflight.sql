@@ -1,6 +1,6 @@
 -- ATACK PLUS — Stage 2 / Part 3-D1
 -- Read-only FK catalog, orphan-reference and cross-store drift preflight.
--- Run with psql against an isolated local test database only, after explicit approval.
+-- Run with psql against an isolated local test database or disposable CI database, after explicit approval.
 -- This script does not alter persistent data or schema. It emits catalog rows and
 -- NOTICE diagnostics; it must never be pointed at staging/production without separate approval.
 
