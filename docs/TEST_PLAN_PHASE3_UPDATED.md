@@ -612,6 +612,13 @@ The replacement regression `tests/phase3-rbac-role-matrix-regression.sql` verifi
 - Inactive legacy role keys have no grants and cannot be assigned through the role-management RPC.
 - The offline SQLite schema and guarded migration are checked by `tests/sqlite-owner-seller-role-regression.py`, including rejection of active legacy assignments and preservation of inactive historical assignments.
 
-The earlier CI result for the five-role matrix (runs `45905700046` and `45905699770`) is superseded: it proves only that the old, incorrect test script executed successfully, not that the business role model was correct. The replacement test must pass in fresh CI before this correction is considered verified.
+The earlier CI result for the five-role matrix (runs `45905700046` and `45905699770`) is superseded: it proves only that the old, incorrect test script executed successfully, not that the business role model was correct.
 
-Scope note: this role correction is not staging or production acceptance and does not complete the overall Phase 3 security gate.
+| CI workflow | Run | Result |
+|---|---:|---|
+| SQL migration smoke test (PostgreSQL role consolidation, owner/seller matrix and SQLite regression) | 45971206966 | PASS |
+| Supabase Auth integration (applies the owner/seller consolidation migration, then exercises real Auth and PostgREST) | 45971206869 | PASS |
+
+Both runs completed successfully on commit `f8a93b05662fe20f85e6d3af4ea275312f286983`. The migration was applied only to isolated CI databases; no production or user database was changed.
+
+Scope note: the database/RPC/RLS role correction is verified in CI, but this repository branch contains no frontend or application UI source files, so seller/owner screen visibility and client-side role checks could not be inspected here. This is not staging or production acceptance and does not complete the overall Phase 3 security gate.
