@@ -104,7 +104,7 @@ SELECT p.store_id,pr.id,pi.id,pi.product_id,pi.product_id,pi.quantity,pi.receive
 WHERE pi.received_quantity>0
   AND NOT EXISTS(SELECT 1 FROM public.purchase_receipt_items pri WHERE pri.purchase_item_id=pi.id);
 
--- Special permissions are intentionally restricted to owner/admin.
+-- Special purchase lifecycle permissions are owner-only in the approved business model.
 INSERT INTO public.permissions(code,description) VALUES
  ('purchases.close_remaining','Close outstanding purchase quantities with reason'),
  ('purchases.receive_excess','Approve excess purchase receipt'),
