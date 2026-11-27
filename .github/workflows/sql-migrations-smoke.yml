@@ -253,3 +253,15 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-fk-catalog-preflight.sql"
+
+      # Stage 2 / Part 3-D2: change only the approved 16 business-history FK actions.
+      # This migration is applied solely to the disposable PostgreSQL CI service.
+      - name: Apply Stage 2 FK history protection migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE2_REPAIR_004_FK_HISTORY_RESTRICT.sql"
+
+      - name: Run Stage 2 FK cascade remediation regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-fk-cascade-remediation-regression.sql"
