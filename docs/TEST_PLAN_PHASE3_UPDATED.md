@@ -610,6 +610,7 @@ The replacement regression `tests/phase3-rbac-role-matrix-regression.sql` verifi
 - The owner retains Super Admin permissions.
 - The seller can sell, collect customer payments and read required product/stock information, while lacking user management, purchases, supplier payments, stock mutation, financial reporting, audit and sync administration.
 - Inactive legacy role keys have no grants and cannot be assigned through the role-management RPC.
+- The offline SQLite schema and guarded migration are checked by `tests/sqlite-owner-seller-role-regression.py`, including rejection of active legacy assignments and preservation of inactive historical assignments.
 
 The earlier CI result for the five-role matrix (runs `45905700046` and `45905699770`) is superseded: it proves only that the old, incorrect test script executed successfully, not that the business role model was correct. The replacement test must pass in fresh CI before this correction is considered verified.
 
