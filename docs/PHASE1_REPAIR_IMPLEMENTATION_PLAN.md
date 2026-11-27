@@ -80,6 +80,23 @@ Tests:
 
 **Gate G1:** Complete relationship matrix, passing negative/positive tests, no silent data changes or loss.
 
+### Implementation update — 2026-11-27 (Part A)
+
+**Status:** Part A implemented on `repair/verified-fixes`; Stage 1 / Gate G1 remains open pending the complete relationship audit of all Phase 3 extension tables and a final data-preflight review.
+
+Implemented:
+- Extended `validate_same_store_references()` with row-level `FOR SHARE` locks on referenced parents.
+- Validated stock-movement references against their actual source tables: invoices, purchases, stock adjustments, sales returns and purchase returns. The shared `return` reference type must resolve to exactly one return row.
+- Required `reference_type` and `reference_id` to be both NULL or both populated.
+- Added parent ownership guards so store reassignment is rejected when dependent business history exists for products, users, invoices, purchases, sales returns, purchase returns, stock adjustments, customers and suppliers.
+- Added positive/negative regression coverage and two-session parent-first/child-first concurrency tests.
+
+**CI evidence (disposable PostgreSQL/Auth-shim environment only):**
+- SQL migration and full regression workflow: [run 45990947758](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45990947758) — PASS, commit `a105040926d2637fc735adc40fcb88a8a6af0d91`.
+- Supabase Auth smoke workflow: [run 45990947866](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45990947866) — PASS, same commit.
+
+**Boundary:** These results do not prove real Supabase staging/production behavior. They also do not close Gate G1: the remaining Phase 3 extension relationships (including receiving, return-item, batch, accounting and sync-related references) still require a complete matrix review before Stage 1 can be accepted.
+
 ## 6. Stage 2 — Soft deletion, tombstones and product retention
 
 **Findings:** F-03, F-04, F-09, F-10.  
