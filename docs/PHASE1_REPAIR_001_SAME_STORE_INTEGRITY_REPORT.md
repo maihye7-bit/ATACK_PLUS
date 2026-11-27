@@ -1,31 +1,54 @@
-# Phase 1 Repair 001 — Same-Store Integrity (Part A)
+# Phase 1 — Same-Store Referential Integrity Repair
 
 **Branch:** `repair/verified-fixes`  
-**Date:** 2026-11-27  
-**Status:** Part A implemented and CI-verified; Stage 1 / Gate G1 remains open.
+**Implementation date:** 2026-11-27  
+**Status:** Implementation and CI verification complete; staging-data acceptance remains pending.
 
-## Changes
+## Implemented migrations
 
-- Hardened `public.validate_same_store_references()` with `FOR SHARE` locks for referenced parent rows.
-- Enforced the stock movement reference contract:
-  - `invoice` → `invoices`
-  - `purchase` → `purchases`
-  - `adjustment` → `stock_adjustments`
-  - `return` → exactly one row across `sales_returns` and `purchase_returns`
-- Rejected half-populated reference pairs (only type or only ID).
-- Added parent-side store reassignment guards for products, users, invoices, purchases, sales returns, purchase returns, stock adjustments, customers and suppliers when dependent business history exists.
-- Added regression fixtures for valid same-store references, cross-store references, mismatched reference types, incomplete NULL pairs, and parent ownership reassignment.
-- Added two-session concurrency checks for both parent-first and child-first lock ordering.
+1. `docs/PHASE1_REPAIR_001_SAME_STORE_INTEGRITY.sql`
+   - Locks referenced parent rows while validating same-store relationships.
+   - Validates stock-movement source references for invoices, purchases, adjustments, sales returns and purchase returns.
+   - Requires reference type and reference ID to be either both NULL or both populated.
+   - Prevents parent store reassignment when dependent stock/business history exists.
 
-## Verification
+2. `docs/PHASE1_REPAIR_002_EXTENSION_SAME_STORE.sql`
+   - Adds composite same-store foreign keys for purchase receipts/items, purchase closures/items, purchase amendments, purchase returns, stock adjustments, inventory batches, stock alerts, chart of accounts, journal entries and general ledger.
+   - Validates indirect purchase-item, receipt-item, closure-item and return-item relationships.
+   - Validates customer/supplier ledger sources and journal/general-ledger source identity.
+   - Adds legacy-data preflight checks before the migration commits.
 
-- SQL migration/full regression: [GitHub Actions 45990947758](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45990947758) — **PASS**
-- Auth smoke: [GitHub Actions 45990947866](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45990947866) — **PASS**
-- Verified commit: `a105040926d2637fc735adc40fcb88a8a6af0d91`
-- Tests ran against isolated CI PostgreSQL and Auth compatibility fixtures. No production/staging database was changed.
+3. `docs/PHASE1_REPAIR_003_SYNC_AUDIT_SAME_STORE.sql`
+   - Ensures sync cursors, outbox rows, sync logs and audit events use a device registered to the same store.
+   - Validates outbox payload record/store identity.
+   - Validates sync-conflict target and snapshot identity.
+   - Validates tombstone target store and keeps user-role conflicts stored but excluded from generic conflict resolution.
+   - Prevents device store reassignment after sync/audit history exists.
 
-## Remaining before Gate G1
+## Tests added or updated
 
-This is not full Stage 1 acceptance. The remaining Phase 3 extension relationships still require a complete parent/child matrix and targeted validation, particularly receiving records, return items, inventory batches, accounting references and synchronization records. Review existing constraints and triggers before adding any duplicate protections. Confirm legacy data compatibility and pre-migration violations before final acceptance.
+- `tests/phase1-same-store-integrity-regression.sql`
+- `tests/phase1-same-store-concurrency.sh`
+- `tests/phase1-extension-same-store-regression.sql`
+- `tests/phase1-sync-audit-same-store-regression.sql`
+- Updated `tests/phase3-accounting-regression.sql` to use a valid adjustment source when testing deferred journal-balance rejection.
+- Updated `.github/workflows/sql-migrations-smoke.yml` to run all new migrations and tests.
 
-No production migration has been executed and no merge to `main` has been performed.
+The purchase-amendment RPC now inserts the amendment source before its supplier-ledger adjustment reference, within the same transaction.
+
+## Final CI evidence
+
+Verified commit: `837f81ead33df7b936e86d011b749d4f9b78fc6d`
+
+- [SQL migration and full regression workflow — 45995177555](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45995177555) — **PASS**
+- [Supabase Auth integration workflow — 45995177653](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45995177653) — **PASS**
+
+The full SQL workflow also ran the existing Phase 2 business, authenticated RPC, concurrency, Phase 3 security, accounting, sync, audit, device and owner/seller role regressions successfully.
+
+## Acceptance boundary
+
+- Tests ran on isolated CI PostgreSQL and Auth compatibility fixtures.
+- Legacy-data preflight logic is present in the migrations, but has not yet been executed against the user's staging or production dataset.
+- No production/staging database was changed.
+- No merge to `main` was performed.
+- Frontend/UI behavior was not included in this database-only stage.
