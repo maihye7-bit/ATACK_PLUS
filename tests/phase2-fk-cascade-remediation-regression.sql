@@ -48,7 +48,10 @@ BEGIN
       AND c.conrelid=format('public.%I',e.source_table)::regclass
       AND c.conname=e.constraint_name;
 
-    IF NOT FOUND OR v_actual.confrelid IS DISTINCT FROM format('public.%I',e.referenced_table)::regclass
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'FK is missing: %.%',e.source_table,e.constraint_name;
+    END IF;
+    IF v_actual.confrelid IS DISTINCT FROM format('public.%I',e.referenced_table)::regclass
        OR v_actual.source_columns IS DISTINCT FROM e.source_columns
        OR v_actual.referenced_columns IS DISTINCT FROM e.referenced_columns
        OR v_actual.confdeltype<>'r' OR v_actual.confupdtype<>'a'
