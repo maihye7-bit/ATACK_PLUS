@@ -2,6 +2,20 @@
 -- Run only after PHASE2_REPAIR_004_FK_HISTORY_RESTRICT.sql on disposable CI DB.
 BEGIN;
 
+-- Supply the one minimal dependent row not covered by the existing business
+-- regression fixtures, so every approved FK gets a real DELETE-blocking check.
+INSERT INTO public.product_units(product_id,unit_id,conversion_factor)
+SELECT p.id,u.id,1
+  FROM public.products p
+ CROSS JOIN public.units u
+ WHERE NOT EXISTS (
+   SELECT 1 FROM public.product_units pu
+   WHERE pu.product_id=p.id AND pu.unit_id=u.id
+ )
+ ORDER BY p.id,u.id
+ LIMIT 1
+ON CONFLICT DO NOTHING;
+
 DO $fk_contract$
 DECLARE
   e record;
