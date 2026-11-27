@@ -28,7 +28,7 @@ VALUES ('$CATEGORY','$STORE','Soft-delete concurrency fixture',TRUE);
 CREATE OR REPLACE FUNCTION public.test_delay_soft_delete_concurrency_audit()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-AS $test_delay$
+AS \$test_delay\$
 BEGIN
   IF NEW.entity_type='categories'
      AND NEW.entity_id='$CATEGORY'::UUID
@@ -37,7 +37,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$test_delay$;
+\$test_delay\$;
 
 DROP TRIGGER IF EXISTS trg_test_soft_delete_concurrency_delay ON public.audit_logs;
 CREATE TRIGGER trg_test_soft_delete_concurrency_delay
@@ -78,7 +78,7 @@ wait "$first_pid"
 wait "$second_pid"
 
 "\${PSQL[@]}" <<SQL
-DO $concurrent_soft_delete_check$
+DO \$concurrent_soft_delete_check\$
 DECLARE
   v_tombstones INTEGER;
   v_delete_audits INTEGER;
@@ -109,7 +109,7 @@ BEGIN
   END IF;
   RAISE NOTICE 'PASS: concurrent soft deletes serialize; one tombstone, one DELETE audit and one change event per affected record';
 END;
-$concurrent_soft_delete_check$;
+\$concurrent_soft_delete_check\$;
 SQL
 
 echo "PASS: two concurrent soft-delete calls on one record are idempotent and serialized"
