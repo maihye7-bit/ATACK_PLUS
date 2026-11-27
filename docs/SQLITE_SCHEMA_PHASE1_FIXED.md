@@ -99,7 +99,7 @@ CREATE INDEX idx_users_store ON users(store_id);
 
 ```sql
 CREATE TABLE roles (
-    id TEXT PRIMARY KEY CHECK(id IN ('owner', 'admin', 'accountant', 'cashier', 'stock_keeper')),
+    id TEXT PRIMARY KEY CHECK(id IN ('owner', 'cashier')),
     name TEXT NOT NULL,
     description TEXT,
     is_active INTEGER DEFAULT 1 CHECK(is_active IN (0, 1))
@@ -113,7 +113,7 @@ CREATE TABLE permissions (
 
 CREATE TABLE role_permissions (
     id TEXT PRIMARY KEY CHECK(length(id) = 36),
-    role_id TEXT NOT NULL CHECK(role_id IN ('owner', 'admin', 'accountant', 'cashier', 'stock_keeper')),
+    role_id TEXT NOT NULL CHECK(role_id IN ('owner', 'cashier')),
     permission_id TEXT NOT NULL CHECK(length(permission_id) = 36),
     granted_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (role_id) REFERENCES roles(id),
@@ -124,7 +124,7 @@ CREATE TABLE role_permissions (
 CREATE TABLE user_roles (
     id TEXT PRIMARY KEY CHECK(length(id) = 36),
     user_id TEXT NOT NULL CHECK(length(user_id) = 36),
-    role_id TEXT NOT NULL CHECK(role_id IN ('owner', 'admin', 'accountant', 'cashier', 'stock_keeper')),
+    role_id TEXT NOT NULL CHECK(role_id IN ('owner', 'cashier')),
     granted_by TEXT CHECK(length(granted_by) = 36),
     granted_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -1704,11 +1704,8 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Roles (الأدوار)
 INSERT INTO roles (id, name, description, is_active) VALUES
-('owner',        'المالك',        'صلاحيات كاملة',       1),
-('admin',        'مدير',          'إدارة كاملة للمتجر',    1),
-('accountant',   'محاسب',         'وصول للمالية والحسابات',1),
-('cashier',      'كاشير',         'مبيعات ونقاط بيع',     1),
-('stock_keeper', 'أمين مخزن',     'إدارة المخزون والشراء', 1)
+('owner',   'المالك', 'صلاحيات كاملة للمالك / Super Admin', 1),
+('cashier', 'بائع',   'المفتاح التقني المعتمد لحساب البائع', 1)
 ON CONFLICT (id) DO NOTHING;
 
 -- Permissions (الصلاحيات الأساسية) — معرفات UUID صريحة بطول 36
@@ -1745,28 +1742,12 @@ ON CONFLICT (code) DO NOTHING;
 INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id)
 SELECT lower(hex(randomblob(16))), 'owner', id FROM permissions;
 
--- Admin: كل شيء ما عدا settings.write
-INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id)
-SELECT lower(hex(randomblob(16))), 'admin', id FROM permissions WHERE code != 'settings.write';
-
--- Accountant
-INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id)
-SELECT lower(hex(randomblob(16))), 'accountant', id FROM permissions
-WHERE code IN ('reports.financial', 'reports.inventory', 'customers.read', 'suppliers.read',
-               'customers.payments', 'suppliers.payments', 'sales.read', 'purchases.read');
-
--- Cashier
+-- Seller uses the compatibility key 'cashier'; this is not a separate cashier business role.
 INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id)
 SELECT lower(hex(randomblob(16))), 'cashier', id FROM permissions
 WHERE code IN ('products.read', 'inventory.read', 'sales.read', 'sales.write', 'sales.void',
                'customers.read', 'customers.write', 'customers.payments', 'reports.inventory');
 
--- Stock Keeper
-INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id)
-SELECT lower(hex(randomblob(16))), 'stock_keeper', id FROM permissions
-WHERE code IN ('products.read', 'products.write', 'inventory.read', 'inventory.write',
-               'purchases.read', 'purchases.write', 'purchases.receive', 'suppliers.read',
-               'reports.inventory');
 ```
 
 ---
