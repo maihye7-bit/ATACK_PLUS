@@ -14,7 +14,11 @@ BEGIN
     'journal_entries','general_ledger',
     'purchase_receipts','purchase_receipt_items',
     'purchase_closures','purchase_closure_items',
-    'purchase_amendments'
+    'purchase_amendments',
+    -- Master data is writable only through authenticated, permission-checking
+    -- SECURITY DEFINER RPCs / the validated Outbox pipeline. Direct PostgREST
+    -- INSERT, UPDATE and DELETE would bypass audit and tombstone guarantees.
+    'categories','brands','products','customers','suppliers'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',t);
 
