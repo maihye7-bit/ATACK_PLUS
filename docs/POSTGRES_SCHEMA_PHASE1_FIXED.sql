@@ -989,7 +989,7 @@ ALTER TABLE tombstones
 
 -- Cross-store checks for dependent tables that do not carry store_id.
 CREATE OR REPLACE FUNCTION public.validate_same_store_references()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 DECLARE
     v_store_a UUID;
     v_store_b UUID;
@@ -1008,10 +1008,6 @@ BEGIN
       WHEN 'stock_movements' THEN
         SELECT store_id INTO v_store_a FROM products WHERE id = NEW.product_id FOR SHARE;
         SELECT store_id INTO v_store_b FROM users WHERE id = NEW.user_id FOR SHARE;
-
-        -- A reference must be either fully absent or resolve to a record in
-        -- the same store as the movement's product. Lock the referenced row
-        -- so a concurrent ownership change cannot pass this check unnoticed.
         IF (NEW.reference_type IS NULL) <> (NEW.reference_id IS NULL) THEN
             RAISE EXCEPTION 'Stock movement reference type and ID must both be NULL or both be set';
         END IF;
@@ -1071,13 +1067,12 @@ BEGIN
       ELSE
         RAISE EXCEPTION 'Unsupported table for same-store validation: %', TG_TABLE_NAME;
     END CASE;
-
     IF v_store_a IS NULL OR v_store_b IS NULL OR v_store_a IS DISTINCT FROM v_store_b THEN
         RAISE EXCEPTION 'Cross-store or missing reference rejected for table %', TG_TABLE_NAME;
     END IF;
     RETURN NEW;
 END;
-$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 CREATE TRIGGER trg_invoice_items_same_store BEFORE INSERT OR UPDATE ON invoice_items
 FOR EACH ROW EXECUTE FUNCTION public.validate_same_store_references();
