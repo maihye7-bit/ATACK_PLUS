@@ -16,7 +16,7 @@
 
 The foundational Phase 1 schema originally seeded `admin`, `accountant` and `stock_keeper`. These are legacy implementation roles, not approved business roles. The forward migration `ATACK_PLUS_PHASE3_OWNER_SELLER_ROLE_CONSOLIDATION.sql` retains their role rows to preserve foreign-key/history safety, marks them inactive, removes their permission grants and updates `has_store_permission` to ignore inactive roles.
 
-The migration deliberately stops if any **active** user still has one of those legacy role assignments. Such accounts require explicit review and remapping before the migration is retried. It does not silently promote anyone to owner or seller. Inactive historical user-role rows may remain for traceability; the legacy role rows are not assignable through the controlled role/profile RPCs.
+The PostgreSQL migration deliberately stops if any **active** user still has one of those legacy role assignments. Such accounts require explicit review and remapping before the migration is retried. It does not silently promote anyone to owner or seller. Inactive historical user-role rows may remain for traceability; the legacy role rows are not assignable through the controlled role/profile RPCs. The SQLite bootstrap schema is aligned to the same two active keys, and `SQLITE_MIGRATION_OWNER_SELLER_ROLES.sql` provides a guarded offline-database upgrade that retains historical assignments for inactive users.
 
 ## 3. Effective permission boundaries
 
