@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "\${PGPASSWORD:?PGPASSWORD must be set}"
+: "${PGPASSWORD:?PGPASSWORD must be set}"
 PSQL=(psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1)
 STORE='10000000-0000-4000-8000-000000000001'
 AUTH='20000000-0000-4000-8000-000000000001'
@@ -11,7 +11,7 @@ SECOND_APP='atack-soft-delete-concurrency-second'
 
 tmpdir="$(mktemp -d)"
 cleanup() {
-  "\${PSQL[@]}" >/dev/null 2>&1 <<'SQL' || true
+  "${PSQL[@]}" >/dev/null 2>&1 <<'SQL' || true
 DROP TRIGGER IF EXISTS trg_test_soft_delete_concurrency_delay ON public.audit_logs;
 DROP FUNCTION IF EXISTS public.test_delay_soft_delete_concurrency_audit();
 SQL
@@ -21,7 +21,7 @@ trap cleanup EXIT
 
 # Use an isolated category and delay the first transaction at its final audit
 # insert. The second independent session must wait on the same category row.
-"\${PSQL[@]}" <<SQL
+"${PSQL[@]}" <<SQL
 INSERT INTO public.categories(id,store_id,name,is_active)
 VALUES ('$CATEGORY','$STORE','Soft-delete concurrency fixture',TRUE);
 
@@ -45,10 +45,10 @@ BEFORE INSERT ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION public.test_delay_soft_delete_concurrency_audit();
 SQL
 
-baseline_category_changes="$("\${PSQL[@]}" -Atc "SELECT count(*) FROM public.change_log WHERE store_id='$STORE' AND table_name='categories' AND record_uuid='$CATEGORY'")"
-baseline_tombstone_changes="$("\${PSQL[@]}" -Atc "SELECT count(*) FROM public.change_log WHERE store_id='$STORE' AND table_name='tombstones' AND record_uuid IN (SELECT id FROM public.tombstones WHERE store_id='$STORE' AND table_name='categories' AND record_uuid='$CATEGORY')")"
+baseline_category_changes="$("${PSQL[@]}" -Atc "SELECT count(*) FROM public.change_log WHERE store_id='$STORE' AND table_name='categories' AND record_uuid='$CATEGORY'")"
+baseline_tombstone_changes="$("${PSQL[@]}" -Atc "SELECT count(*) FROM public.change_log WHERE store_id='$STORE' AND table_name='tombstones' AND record_uuid IN (SELECT id FROM public.tombstones WHERE store_id='$STORE' AND table_name='categories' AND record_uuid='$CATEGORY')")"
 
-PGAPPNAME="$FIRST_APP" "\${PSQL[@]}" >"$tmpdir/first.log" 2>&1 <<SQL &
+PGAPPNAME="$FIRST_APP" "${PSQL[@]}" >"$tmpdir/first.log" 2>&1 <<SQL &
 SELECT set_config('request.jwt.claim.sub','$AUTH',false);
 SELECT public.soft_delete_record('categories','$CATEGORY','$STORE','30000000-0000-4000-8000-000000000001');
 SQL
@@ -58,7 +58,7 @@ first_pid=$!
 # the audit trigger while still holding the category row lock.
 sleeping=''
 for _ in $(seq 1 80); do
-  sleeping="$("\${PSQL[@]}" -Atc "SELECT count(*) FROM pg_stat_activity WHERE application_name='$FIRST_APP' AND state='active' AND wait_event='PgSleep'")"
+  sleeping="$("${PSQL[@]}" -Atc "SELECT count(*) FROM pg_stat_activity WHERE application_name='$FIRST_APP' AND state='active' AND wait_event='PgSleep'")"
   [[ "$sleeping" == "1" ]] && break
   sleep 0.1
 done
@@ -68,7 +68,7 @@ if [[ "$sleeping" != "1" ]]; then
   exit 1
 fi
 
-PGAPPNAME="$SECOND_APP" "\${PSQL[@]}" >"$tmpdir/second.log" 2>&1 <<SQL &
+PGAPPNAME="$SECOND_APP" "${PSQL[@]}" >"$tmpdir/second.log" 2>&1 <<SQL &
 SELECT set_config('request.jwt.claim.sub','$AUTH',false);
 SELECT public.soft_delete_record('categories','$CATEGORY','$STORE','30000000-0000-4000-8000-000000000001');
 SQL
@@ -77,7 +77,7 @@ second_pid=$!
 wait "$first_pid"
 wait "$second_pid"
 
-"\${PSQL[@]}" <<SQL
+"${PSQL[@]}" <<SQL
 DO \$concurrent_soft_delete_check\$
 DECLARE
   v_tombstones INTEGER;
