@@ -7,7 +7,7 @@ INSERT INTO public.permissions(code,description)
 VALUES ('purchases.edit_after_receipt','Authorize purchase amendments after receipt')
 ON CONFLICT(code) DO NOTHING;
 INSERT INTO public.role_permissions(role_id,permission_id)
-SELECT r.role_id,p.id FROM (VALUES ('owner'),('admin')) r(role_id)
+SELECT r.role_id,p.id FROM (VALUES ('owner')) r(role_id)
 JOIN public.permissions p ON p.code='purchases.edit_after_receipt'
 ON CONFLICT(role_id,permission_id) DO NOTHING;
 
