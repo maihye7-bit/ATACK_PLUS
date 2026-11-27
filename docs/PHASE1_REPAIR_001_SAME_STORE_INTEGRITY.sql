@@ -124,53 +124,37 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION public.prevent_store_reassignment_with_stock_movements()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 DECLARE
     v_has_movements BOOLEAN := FALSE;
 BEGIN
     IF NEW.store_id IS NOT DISTINCT FROM OLD.store_id THEN
         RETURN NEW;
     END IF;
-
     CASE TG_TABLE_NAME
       WHEN 'products' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE product_id = OLD.id)
-          INTO v_has_movements;
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE product_id = OLD.id) INTO v_has_movements;
       WHEN 'users' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE user_id = OLD.id)
-          INTO v_has_movements;
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE user_id = OLD.id) INTO v_has_movements;
       WHEN 'invoices' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements
-          WHERE reference_type = 'invoice' AND reference_id = OLD.id)
-          INTO v_has_movements;
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'invoice' AND reference_id = OLD.id) INTO v_has_movements;
       WHEN 'purchases' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements
-          WHERE reference_type = 'purchase' AND reference_id = OLD.id)
-          INTO v_has_movements;
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'purchase' AND reference_id = OLD.id) INTO v_has_movements;
       WHEN 'stock_adjustments' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements
-          WHERE reference_type = 'adjustment' AND reference_id = OLD.id)
-          INTO v_has_movements;
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'adjustment' AND reference_id = OLD.id) INTO v_has_movements;
       WHEN 'sales_returns' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements
-          WHERE reference_type = 'return' AND reference_id = OLD.id)
-          INTO v_has_movements;
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'return' AND reference_id = OLD.id) INTO v_has_movements;
       WHEN 'purchase_returns' THEN
-        SELECT EXISTS (SELECT 1 FROM public.stock_movements
-          WHERE reference_type = 'return' AND reference_id = OLD.id)
-          INTO v_has_movements;
+        SELECT EXISTS (SELECT 1 FROM public.stock_movements WHERE reference_type = 'return' AND reference_id = OLD.id) INTO v_has_movements;
       ELSE
         RAISE EXCEPTION 'Unsupported parent table for stock movement ownership guard: %', TG_TABLE_NAME;
     END CASE;
-
     IF v_has_movements THEN
-        RAISE EXCEPTION 'Cannot change store_id for % % after stock movements reference it',
-          TG_TABLE_NAME, OLD.id;
+        RAISE EXCEPTION 'Cannot change store_id for % % after stock movements reference it', TG_TABLE_NAME, OLD.id;
     END IF;
     RETURN NEW;
 END;
-$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
-
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_guard_product_stock_movement_store ON public.products;
 CREATE TRIGGER trg_guard_product_stock_movement_store
