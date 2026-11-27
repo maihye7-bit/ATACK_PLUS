@@ -142,9 +142,13 @@ BEGIN
       AND NULLIF(NEW.remote_record_json->>'id','')::UUID IS DISTINCT FROM NEW.record_uuid) THEN
     RAISE EXCEPTION 'Sync conflict snapshots must preserve the conflict record identity and store';
   END IF;
-  v_target_store:=public.resolve_sync_entity_store(NEW.table_name,NEW.record_uuid);
-  IF v_target_store IS NULL OR v_target_store IS DISTINCT FROM NEW.store_id THEN
-    RAISE EXCEPTION 'Sync conflict target must exist in the same store';
+  -- Role grants are deliberately excluded from generic conflict mutation and
+  -- do not have a single-row UUID key; retain their conflict record but never resolve it generically.
+  IF NEW.table_name<>'user_roles' THEN
+    v_target_store:=public.resolve_sync_entity_store(NEW.table_name,NEW.record_uuid);
+    IF v_target_store IS NULL OR v_target_store IS DISTINCT FROM NEW.store_id THEN
+      RAISE EXCEPTION 'Sync conflict target must exist in the same store';
+    END IF;
   END IF;
   RETURN NEW;
 END;
