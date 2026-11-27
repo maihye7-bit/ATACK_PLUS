@@ -49,8 +49,21 @@ DECLARE
   v_deleted_at_before TIMESTAMPTZ;
   v_rollback_category UUID := '93000000-0000-4000-8000-000000000003';
   v_rollback_error TEXT;
+  v_master_table TEXT;
 BEGIN
   PERFORM set_config('request.jwt.claim.sub',v_auth::TEXT,TRUE);
+
+  -- Authenticated clients must not have direct DML table- or column-level grants
+  -- on any master-data table; trusted SECURITY DEFINER RPCs remain the write path.
+  FOREACH v_master_table IN ARRAY ARRAY['categories','brands','products','customers','suppliers'] LOOP
+    IF has_table_privilege('authenticated',format('public.%I',v_master_table),'INSERT')
+       OR has_table_privilege('authenticated',format('public.%I',v_master_table),'UPDATE')
+       OR has_table_privilege('authenticated',format('public.%I',v_master_table),'DELETE')
+       OR has_any_column_privilege('authenticated',format('public.%I',v_master_table),'INSERT')
+       OR has_any_column_privilege('authenticated',format('public.%I',v_master_table),'UPDATE') THEN
+      RAISE EXCEPTION 'Authenticated role retains a direct DML grant on public.%',v_master_table;
+    END IF;
+  END LOOP;
 
   -- Push is idempotent at enqueue time: exact replay returns the same Outbox row.
   v_outbox := public.create_outbox_entry(
