@@ -189,6 +189,8 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-rbac-role-matrix-regression.sql"
+      - name: Run offline SQLite owner/seller role migration regression
+        run: python tests/sqlite-owner-seller-role-regression.py
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
