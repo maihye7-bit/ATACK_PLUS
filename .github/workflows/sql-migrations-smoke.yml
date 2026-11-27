@@ -246,3 +246,10 @@ jobs:
             ) THEN RAISE EXCEPTION 'trg_log_change missing'; END IF;
           END $$;
           SQL
+
+      # Read-only Stage 2 / Part 3-D1 FK catalog and data-integrity preflight.
+      # Runs only against this workflow's disposable PostgreSQL 16 service.
+      - name: Run Stage 2 FK catalog preflight (read-only)
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-fk-catalog-preflight.sql"
