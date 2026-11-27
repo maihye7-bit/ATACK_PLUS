@@ -273,6 +273,7 @@ for method in PATCH DELETE; do
   fi
 done
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v category_id="$OUTBOX_CATEGORY_ID" <<'SQL'
+SELECT set_config('atack.test.category_id', :'category_id', false);
 DO $assert_direct_write_blocked$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.categories
@@ -292,6 +293,7 @@ SOFT_DELETE_ARGS="$(jq -nc --arg table "categories" --arg record "$OUTBOX_CATEGO
   '{p_table_name:$table,p_record_uuid:$record,p_store_id:$store,p_deleted_by:$user}')"
 rpc_call "$OWNER_TOKEN" "soft_delete_record" "$SOFT_DELETE_ARGS" >/dev/null
 psql "$DB_URL" -v ON_ERROR_STOP=1 -v category_id="$OUTBOX_CATEGORY_ID" <<'SQL'
+SELECT set_config('atack.test.category_id', :'category_id', false);
 DO $assert_soft_delete_rpc$
 BEGIN
   IF EXISTS (SELECT 1 FROM public.categories
