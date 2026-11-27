@@ -714,7 +714,7 @@ The CI step is present in the SQL migration workflow and must remain read-only. 
 
 ### 19.8 Part 3-D2 — detailed FK migration specification (2026-11-27)
 
-**Status:** Design specification only. No migration SQL has been authored or executed. No database has been altered.
+**Status at the time this section was written:** Design specification only; migration SQL had not yet been authored. The owner subsequently approved the matrix and fail-fast contract, and implementation/CI evidence is recorded in Section 19.9. Section 19.9 supersedes the implementation-status statements below; this section remains the historical design specification.
 
 #### A. Evidence baseline and limits
 
@@ -808,11 +808,12 @@ This sequence is a behavioral specification, not executable SQL and not authoriz
 #### G. Outstanding evidence and scope boundary
 
 - The target database catalog/drift/data preflight from Part 3-D1 remains outstanding.
-- Business RPC and trigger call paths that may physically delete or depend on parent-child cascades must be globally reviewed before implementation; this specification does not claim that all application delete paths have been exhaustively proven safe.
+- The static review of current repository SQL delete paths was subsequently performed and is recorded in Section 19.9. It does not prove behavior of arbitrary manual SQL or unknown external integrations.
 - The actual PostgreSQL trigger behavior for cascade-generated child DELETE events remains a Part 3-D3/D4 test requirement.
-- No migration SQL, test code, schema change, live database operation, staging/production operation, merge to `main`, or frontend work is included in this Part 3-D2 design step.
+- The historical statement that no migration/test code had been authored applies only to the design snapshot in this section. The implementation and CI results are recorded in Section 19.9.
+- No persistent local, staging or production database operation, merge to `main`, or frontend work is included in Part 3-D2.
 
-**Decision required before the next implementation step:** owner approval of this 16-constraint action matrix and fail-fast contract. Migration authoring and test-code changes remain a separate step; database execution remains separately approved.
+The 16-constraint matrix and fail-fast contract were approved and implemented as recorded in Section 19.9. The next step, Part 3-D3, requires its own approval before code changes; database execution remains separately approved.
 
 
 ### 19.9 Part 3-D2 — migration and regression implementation (2026-11-27)
