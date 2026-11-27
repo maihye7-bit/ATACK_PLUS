@@ -813,3 +813,65 @@ This sequence is a behavioral specification, not executable SQL and not authoriz
 - No migration SQL, test code, schema change, live database operation, staging/production operation, merge to `main`, or frontend work is included in this Part 3-D2 design step.
 
 **Decision required before the next implementation step:** owner approval of this 16-constraint action matrix and fail-fast contract. Migration authoring and test-code changes remain a separate step; database execution remains separately approved.
+
+
+### 19.9 Part 3-D2 — migration and regression implementation (2026-11-27)
+
+**Status:** Migration authoring and isolated CI validation are complete on `repair/verified-fixes`. The approved migration has not been applied to any persistent local, staging or production database.
+
+#### A. Final application-path review
+
+Before authoring the migration, the current SQL implementation files were reviewed for physical DELETE statements and relevant trigger behavior, including the Phase 2 business RPCs, returns/inventory/accounting, purchase receiving/amendments/returns, stock adjustments, sync Push, security/RBAC, audit and user/device security files.
+
+Findings:
+- No physical DELETE statement was found in the reviewed business sales, purchase, receiving, return, stock-adjustment, accounting or sync business RPC implementations.
+- The explicit application-level deletes found in the reviewed current files are limited to user-role revocation (`user_roles`) and cleanup of legacy permission grants (`role_permissions`). These are not any of the 16 business-history relationships changed by this migration.
+- The base schema contains a legacy dynamic Outbox DELETE branch, but the later/current `apply_outbox_operation` definition in `ATACK_PLUS_PHASE3_SYNC_PUSH_HARDENING.sql` supersedes it: generic Push accepts INSERT/UPDATE only and routes eligible master-record deletion through `soft_delete_record`.
+- The accounting validation trigger runs after DELETE on `general_ledger` to revalidate journal balance; it is not itself a business deletion path. Audit logs have explicit immutable UPDATE/DELETE/TRUNCATE protection.
+- This was a static review of the current repository SQL files and definitions, not proof about arbitrary SQL run manually by a database owner or unknown external integrations.
+
+#### B. Implemented migration
+
+Added `docs/PHASE2_REPAIR_004_FK_HISTORY_RESTRICT.sql`.
+
+The migration:
+1. Runs in one transaction and takes a transaction-scoped advisory lock.
+2. Creates a transaction-local, explicit 16-constraint allowlist with exact child/parent tables and ordered column mappings.
+3. Locks the affected child tables in a stable order.
+4. Fails before DDL if any of the 16 constraints is missing or differs from the approved schema, column mapping, CASCADE delete action, NO ACTION update action, validation state or non-deferrable state.
+5. Verifies the nine lifecycle exclusions remain present and CASCADE, and that the initial public CASCADE inventory is exactly 25.
+6. Replaces only the 16 named constraints, preserving their names and column mappings, changing only ON DELETE to RESTRICT.
+7. Re-reads the catalog and asserts all 16 are validated RESTRICT constraints and exactly nine public CASCADE constraints remain.
+8. Rolls back the entire transaction on any failed precondition or postcondition.
+
+Both the single-column and composite same-store constraints for purchase receipt items and purchase closure items are retained as separate RESTRICT constraints. No FK was collapsed or weakened.
+
+#### C. Regression and CI
+
+Added `tests/phase2-fk-cascade-remediation-regression.sql` and appended the migration/test steps to `.github/workflows/sql-migrations-smoke.yml`. The workflow runs the migration only against its disposable PostgreSQL 16 service, after the read-only Part 3-D1 catalog preflight.
+
+The regression verifies:
+- Exact names, source/target tables, ordered column mappings, ON DELETE RESTRICT, ON UPDATE NO ACTION, validation and non-deferrable state for all 16 constraints.
+- Exactly nine lifecycle-exclusion CASCADE constraints remain.
+- Real parent DELETE attempts are blocked for all 16 relationships when dependent rows exist. A minimal product-unit dependent fixture is created inside the test transaction so this relationship is exercised too; the test ends with ROLLBACK and leaves no fixture data behind.
+
+**Final CI evidence**
+- SQL migration smoke test: [run 46070761211](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46070761211).
+- Tested commit: `a543c29ba9011ba22cecff4b0352df02c48b2f18`.
+- Job: `140746879372`.
+- Result: completed / success.
+- Migration application step: success.
+- FK remediation regression step: success.
+- Regression log: **16 RESTRICT contracts verified; real dependent-row DELETE checks executed for all 16 constraints**.
+- The first regression attempt exposed an aliasing defect in the test's dynamic parent-row selection. The migration itself applied successfully; the test was corrected, then the complete SQL workflow was rerun and passed. The failed first run is not counted as acceptance evidence.
+
+#### D. Completion and remaining boundaries
+
+Part 3-D2 migration code and its disposable-CI regression are complete. This does **not** close Stage 2 or authorize deployment:
+- The actual target database catalog/drift/orphan/cross-store preflight remains outstanding and must be performed under separate explicit approval.
+- No persistent local, staging or production database was touched.
+- No merge to `main` was performed.
+- No Change Log child-delete event, Pull/ACK ordering or client reconciliation behavior is implemented or proven by this FK migration. Those remain in the later Part 3-D3/D4 scope.
+- The nine lifecycle exclusions remain a separate store/user/device/sync lifecycle decision; their presence is not permission to physically purge those entities.
+
+The next planned work is Part 3-D3 (Change Log child-delete event semantics and sync contract), which requires its own approval before code changes.
