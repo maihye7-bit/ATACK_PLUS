@@ -56,7 +56,15 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_PHASE3_RETURNS_INVENTORY_ACCOUNTING.sql"
-      - name: Apply Phase 1 same-store integrity repair\n        env:\n          PGPASSWORD: postgres\n        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE1_REPAIR_001_SAME_STORE_INTEGRITY.sql"\n      - name: Run Phase 1 same-store integrity regression\n        env:\n          PGPASSWORD: postgres\n        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase1-same-store-integrity-regression.sql"\n      - name: Apply business return logic repairs
+      - name: Apply Phase 1 same-store integrity repair
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE1_REPAIR_001_SAME_STORE_INTEGRITY.sql"
+      - name: Run Phase 1 same-store integrity regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase1-same-store-integrity-regression.sql"
+      - name: Apply business return logic repairs
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_BUSINESS_RETURNS_REPAIR.sql"
