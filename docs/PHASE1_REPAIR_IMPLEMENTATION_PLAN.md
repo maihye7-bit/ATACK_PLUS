@@ -1,6 +1,6 @@
 # ATACK PLUS — Phase 1 Repair Implementation Plan
 
-**Status:** Proposed plan, pending review and explicit authorization  
+**Status:** Living implementation tracker — work is in progress; stage gates and deployment approvals remain mandatory  
 **Baseline:** Approved `PHASE1_POST_IMPLEMENTATION_AUDIT_AND_FIX_PLAN.md`  
 **Environment:** Local PostgreSQL 16.15 / Ubuntu 24.04 / WSL2 first; real Supabase staging afterward.
 
@@ -321,5 +321,67 @@ If a technical repair conflicts with a business decision, stop and document the 
 ## 16. Immediate next action
 
 The next action is **review, not SQL execution**. Review this plan against the current files. The recommended first implementation stage is **Stage 0 — Freeze and capture the baseline**: it makes no schema or business-data changes and establishes the recovery point for later work.
+
+
+## 17. Verified implementation progress register — 2026-11-27
+
+This register records the implementation and test evidence present on
+`repair/verified-fixes` at branch head
+`8da00f89269833213662f3bb10fcb115a7eaf494`. It does not authorize
+deployment or change the acceptance gates above.
+
+**Status meanings**
+- **Implemented / CI verified:** the relevant code and named automated
+  regression have been run successfully in the stated CI environment.
+- **Partial:** some implementation or tests exist, but the stage gate is
+  not fully demonstrated.
+- **Open:** no sufficient evidence currently closes the stage.
+- A successful workflow is evidence only for the steps it actually runs;
+  it is not proof of staging, production, or client acceptance.
+
+### 17.1 Stage-by-stage status
+
+| Stage | Current status | Verified work and evidence | Remaining acceptance work |
+|---|---|---|---|
+| Stage 0 — Freeze and capture baseline | **Open / not evidenced as complete** | A repair branch exists. | The plan's complete baseline hashes, database inventory, verified backup and restore/readability evidence are not recorded as a completed G0 package. |
+| Stage 1 — Same-store referential integrity | **Implemented; automated SQL regression passed; G1 not fully closed** | Three migrations: `PHASE1_REPAIR_001_SAME_STORE_INTEGRITY.sql`, `PHASE1_REPAIR_002_EXTENSION_SAME_STORE.sql`, and `PHASE1_REPAIR_003_SYNC_AUDIT_SAME_STORE.sql`; regression scripts cover same-store references, extension references, sync/audit references and two-session parent/child concurrency. SQL migration workflow run `45995177555` completed successfully on commit `837f81e...`. | Complete relationship-matrix sign-off, review of legacy-data preflight against the intended staging dataset, and explicit staging acceptance remain open. The current Supabase Auth workflow must also be checked for whether it applies these three repair migrations before its result is counted as Auth coverage for Stage 1. |
+| Stage 2 — Soft deletion, tombstones and product retention | **Partial** | `ATACK_PLUS_PHASE3_SYNC_PUSH_HARDENING.sql` contains an authenticated, store-scoped `soft_delete_record` implementation with an entity allowlist, permission check, target-row lock, tombstone write, deactivation, product `deleted_at`, audit entry and tombstone change-log trigger. Generic Push rejects DELETE and directs callers to this RPC. | Idempotent repeat-delete behavior and audit-event semantics; direct physical DELETE grants/RLS for every history-bearing table; product history and FK cascade policy; parent/child delete propagation; tombstone identity invariant; SQLite parity; and dedicated regression coverage for these cases. The older F-03 description in the audit is historical and is superseded by the newer implementation, but the full G2 gate is not yet proven. |
+| Stage 3 — Warehouses, stock and negative inventory | **Open / not closed** | Stock adjustment, receiving, returns and concurrent stock-operation code/tests exist in the Phase 2/3 business work. | These tests do not establish the Stage 3 requirements: store-owned multi-warehouse model and migration, D-016 permission-controlled negative stock, transfer lifecycle and reconciliation across all inventory write paths. |
+| Stage 4 — Device lifecycle and cursor integrity | **Partial** | Device/user security migrations and regression files exist, including `ATACK_PLUS_PHASE3_USER_ROLE_DEVICE_SECURITY.sql`, `ATACK_PLUS_PHASE3_USER_ACCOUNT_SECURITY.sql`, and their regression scripts. | Verify every pull, push and acknowledgement entry point against active/revoked device state; prove cursor FK/type/non-negative constraints and lifecycle behavior; close the complete G4 matrix. |
+| Stage 5 — Pull, acknowledgement and change-log contract | **Partial** | Sync hardening, Push/Outbox, cursor and sync regression files exist; the CI workflows execute multiple sync regression suites. | End-to-end proof of paging beyond 500 records, contiguous local apply/checkpoint behavior, failed-apply retry, acknowledgement meaning/bounds, and deterministic delete behavior for every independently synchronized table. |
+| Stage 6 — Safe conflict resolution | **Partial** | The sync Push hardening file contains constrained conflict-resolution logic and excludes generic handling for sensitive financial/inventory records. | Complete per-table/per-field allowlist review, target-row locking and store-scoped mutation proof, explicit MERGE payload rules, INSERT/UPDATE/DELETE behavior, adversarial cross-store tests, concurrency and idempotency acceptance. |
+| Stage 7 — RLS, grants, function hardening and audit | **Partial; selected suites passed** | Security catalog, audit, RBAC read, user/device, user-account and owner/seller migrations and regressions are present. The approved business model is one `owner` Super Admin and individual sellers; `cashier` remains the technical seller key displayed as **بائع**; legacy `admin`, `accountant`, and `stock_keeper` keys are disabled, not deleted or silently reassigned. SQL run `45971206966` and Supabase Auth/PostgREST run `45971206869` completed successfully on commit `f8a93b0...`. | These are selected automated security/RBAC checks, not a complete least-privilege review or full Stage 7 acceptance. Verify every table/sequence/function grant, every SECURITY DEFINER boundary, all audit coverage and real staging behavior. |
+| Stage 8 — Regression and staging acceptance | **Partial; CI regression evidence exists, staging gate open** | Phase 2 business workflow run `45582736861` passed its listed business cases; SQL concurrency run `45903805852` passed its listed concurrency cases; Stage 1 SQL run `45995177555` passed; owner/seller SQL and Auth runs `45971206966` and `45971206869` passed. Seller invoice expectation correction runs `45693753617` (SQL) and `45693753776` (Supabase Auth) both completed successfully on commit `91341c0...`. | The Phase 3 test-plan template still contains NOT RUN cases. Managed Supabase staging, actual Android/Windows/Flutter clients, full offline multi-device replay, backup/restore acceptance and production readiness are not demonstrated by these CI runs. |
+
+### 17.2 Important interpretation of the evidence
+
+1. Stage 1 is not being restarted. Its three repair migrations and SQL
+   regression evidence remain recorded as completed implementation work.
+   The remaining items are acceptance and deployment checks, not a reason
+   to repeat the same code changes.
+2. The seller invoice test correction at commit
+   `91341c050e1bdf88b1534ef9beb845261e2c1761` corrected the assertion to
+   expect both invoices created by the seller and to exclude the owner's
+   invoice. The SQL and Supabase Auth workflow runs listed above passed.
+   This is a test-expectation correction, not a new business-role change.
+3. The owner/seller consolidation is the approved business model. The
+   technical key `cashier` must not be interpreted as a separate cashier
+   job, and the inactive legacy role keys must not be reintroduced as
+   business roles.
+4. A local Supabase stack with real Auth/PostgREST integration is stronger
+   than a PostgreSQL-only shim, but it is still not the user's managed
+   Supabase staging or production environment.
+5. The Phase 2/3 business and concurrency test results are valuable
+   regression evidence. They do not automatically close the similarly
+   numbered Stage 2/3 gates in this Phase 1 repair plan.
+
+### 17.3 Current next step
+
+Continue with a focused Stage 2 audit and closure matrix: inspect physical
+DELETE permissions and cascades, repeated soft-delete behavior, product
+history retention, tombstone/change-log propagation and SQLite parity;
+then add or run only the missing targeted regressions. Do not repeat Stage
+1 implementation, do not skip ahead to Stage 3, and do not apply these
+migrations to managed staging or production without separate approval.
 
 *End of proposed implementation plan.*
