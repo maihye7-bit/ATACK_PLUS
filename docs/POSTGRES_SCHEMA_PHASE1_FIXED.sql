@@ -174,6 +174,7 @@ CREATE TABLE brands (
     name TEXT NOT NULL,
     scent TEXT,
     size TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
