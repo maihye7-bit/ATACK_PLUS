@@ -994,6 +994,8 @@ DECLARE
     v_store_a UUID;
     v_store_b UUID;
     v_store_c UUID;
+    v_reference_count INTEGER;
+    v_reference_store_count INTEGER;
 BEGIN
     CASE TG_TABLE_NAME
       WHEN 'invoice_items' THEN
@@ -1020,7 +1022,28 @@ BEGIN
               WHEN 'adjustment' THEN
                 SELECT store_id INTO v_store_c FROM stock_adjustments WHERE id = NEW.reference_id FOR SHARE;
               WHEN 'return' THEN
-                SELECT store_id INTO v_store_c FROM sales_returns WHERE id = NEW.reference_id FOR SHARE;
+                -- The existing business model uses reference_type='return' for
+                -- both sales_returns and purchase_returns. Require exactly one
+                -- matching parent so a UUID collision cannot make the reference ambiguous.
+                PERFORM 1 FROM sales_returns WHERE id = NEW.reference_id FOR SHARE;
+                PERFORM 1 FROM purchase_returns WHERE id = NEW.reference_id FOR SHARE;
+                SELECT COUNT(*), COUNT(DISTINCT store_id)
+                  INTO v_reference_count, v_reference_store_count
+                  FROM (
+                    SELECT store_id FROM sales_returns WHERE id = NEW.reference_id
+                    UNION ALL
+                    SELECT store_id FROM purchase_returns WHERE id = NEW.reference_id
+                  ) AS return_refs;
+                IF v_reference_count <> 1 OR v_reference_store_count <> 1 THEN
+                    RAISE EXCEPTION 'Stock movement return reference must resolve to exactly one return record';
+                END IF;
+                SELECT store_id INTO v_store_c
+                  FROM (
+                    SELECT store_id FROM sales_returns WHERE id = NEW.reference_id
+                    UNION ALL
+                    SELECT store_id FROM purchase_returns WHERE id = NEW.reference_id
+                  ) AS return_refs
+                 LIMIT 1;
               ELSE
                 RAISE EXCEPTION 'Unsupported stock movement reference type: %', NEW.reference_type;
             END CASE;
