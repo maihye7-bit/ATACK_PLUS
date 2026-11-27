@@ -594,27 +594,23 @@ The first CI attempt exposed a fixture collision in generated adjustment numbers
 Scope note: these results verify the two concurrency scenarios above in CI. They do not constitute staging or production acceptance, nor do they mark every Phase 3 test-plan item as executed.
 
 
-## 15. Verified RBAC Role Matrix and Admin Escalation Boundary (2026-11-26)
+## 15. Owner/Seller Role Consolidation — supersedes the earlier incorrect matrix
 
-Executed by `tests/phase3-rbac-role-matrix-regression.sql` after all Phase 3 security migrations in the isolated PostgreSQL 16 CI database.
+The previous RBAC regression tested `admin`, `accountant` and `stock_keeper` as if they were approved business roles. That test passed technically but validated the wrong business model and is **not accepted as project security evidence**.
 
-| Role | Verified boundary |
-|---|---|
-| Owner / Super Admin | Has `settings.write`, `audit.read`, `purchases.return`, `inventory.adjust` and `inventory.allow_negative` |
-| Admin | Has privileged purchase/inventory operations and `users.manage`, but lacks `settings.write` and owner-only `audit.read` |
-| Accountant | Has financial reporting and customer/supplier payment permissions; lacks sales/purchase mutation, purchase-return, inventory-adjustment and audit permissions |
-| Seller (`cashier` database key) | Can sell, receive customer payments and read sales-required inventory/report data; cannot manage purchases, suppliers, stock writes/adjustments, financial reports, users or audit records |
-| Stock keeper | Can manage products, routine inventory writes and purchase receiving; lacks privileged stock adjustment, purchase return, financial, sales and audit permissions |
+The approved model is now:
+- `owner`: the sole Super Admin identity with full store authority.
+- `cashier`: retained only as the current technical database key for sellers; its displayed role name is corrected to **بائع**.
+- `admin`, `accountant` and `stock_keeper`: legacy keys retained only to protect foreign-key/history compatibility. The consolidation migration disables them and removes their permission grants.
 
-The regression also verifies that an admin can delegate a role whose complete permission set is within the admin's own permissions, but cannot grant the full `owner` role. The denied escalation leaves no owner-role assignment behind.
+The migration includes a preflight that blocks if an active user still has a legacy role assignment. Such accounts must be explicitly reviewed and remapped; no automatic promotion or silent reassignment is allowed. Permission resolution also ignores inactive roles, and controlled role provisioning rejects them.
 
-The stale Phase 3 security document was reconciled with the executable permission catalog. In particular, it now distinguishes `inventory.write` from `inventory.adjust`, documents `reports.inventory` and `reports.financial`, and removes references to unused permission codes `reports.view`, `accounting.view` and `accounting.create`.
+The replacement regression `tests/phase3-rbac-role-matrix-regression.sql` verifies:
+- Only `owner` and the seller's technical `cashier` key remain active.
+- The owner retains Super Admin permissions.
+- The seller can sell, collect customer payments and read required product/stock information, while lacking user management, purchases, supplier payments, stock mutation, financial reporting, audit and sync administration.
+- Inactive legacy role keys have no grants and cannot be assigned through the role-management RPC.
 
-| CI workflow | Run | Result |
-|---|---:|---|
-| SQL migration smoke test | 45905700046 | PASS |
-| Supabase Auth integration smoke test | 45905699770 | PASS |
+The earlier CI result for the five-role matrix (runs `45905700046` and `45905699770`) is superseded: it proves only that the old, incorrect test script executed successfully, not that the business role model was correct. The replacement test must pass in fresh CI before this correction is considered verified.
 
-The SQL workflow also passed the existing concurrency, RLS, security-catalog, audit, user-role/device, user-account and read-RBAC regressions. The Supabase workflow passed with real local Supabase Auth identities and PostgREST requests.
-
-Scope note: this verifies the role matrix and tested authorization boundaries in CI. It does not constitute production/staging acceptance or mark the complete Stage 7 security gate as finished.
+Scope note: this role correction is not staging or production acceptance and does not complete the overall Phase 3 security gate.
