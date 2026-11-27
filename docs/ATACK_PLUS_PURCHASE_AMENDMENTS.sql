@@ -139,6 +139,12 @@ BEGIN
     WHERE id=v_item;
  END LOOP;
 
+ -- Persist the amendment source before emitting its supplier-ledger adjustment.
+ -- The enclosing transaction rolls both back if any later financial step fails.
+ INSERT INTO public.purchase_amendments(id,store_id,purchase_id,operation_id,reason,
+   old_values_json,new_values_json,changed_by)
+ VALUES(v_id,p_store_id,v_purchase,p_operation_id,v_reason,v_old,v_new,v_user);
+
  IF v_delta<>0 THEN
    UPDATE public.purchases SET subtotal=subtotal+v_delta,total_amount=total_amount+v_delta,
      remaining_amount=GREATEST(remaining_amount+v_delta,0),
@@ -159,9 +165,6 @@ BEGIN
      'Purchase amendment '||v_id::text,v_user FROM public.suppliers WHERE id=v_supplier;
  END IF;
 
- INSERT INTO public.purchase_amendments(id,store_id,purchase_id,operation_id,reason,
-   old_values_json,new_values_json,changed_by)
- VALUES(v_id,p_store_id,v_purchase,p_operation_id,v_reason,v_old,v_new,v_user);
  UPDATE public.purchase_amendments
     SET debt_reduction=CASE WHEN v_delta<0 THEN v_debt_reduction ELSE 0 END,
         supplier_credit_created=v_credit_increase,
