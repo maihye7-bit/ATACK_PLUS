@@ -177,6 +177,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-audit-event-regression.sql"
+      - name: Run concurrent soft-delete regression
+        env:
+          PGPASSWORD: postgres
+        run: bash tests/phase2-soft-delete-concurrency.sh
       - name: Apply Phase 3 user-role and device security
         env:
           PGPASSWORD: postgres
