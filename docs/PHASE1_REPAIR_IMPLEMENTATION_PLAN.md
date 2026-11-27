@@ -710,3 +710,106 @@ Added `tests/phase2-fk-catalog-preflight.sql` and a dedicated step to `.github/w
 - This result completes the **CI execution portion of Part 3-D1 only**. It does not close the real-database drift/data preflight, approve an FK migration, or authorize staging/production changes.
 
 The CI step is present in the SQL migration workflow and must remain read-only. No SQL migration was applied to a persistent environment, and no merge to `main` occurred.
+
+
+### 19.8 Part 3-D2 — detailed FK migration specification (2026-11-27)
+
+**Status:** Design specification only. No migration SQL has been authored or executed. No database has been altered.
+
+#### A. Evidence baseline and limits
+
+The specification is based on the PostgreSQL 16 catalog output from SQL migration smoke workflow run `46068143484`, commit `7682b5ad6141c49ff1cff5941f517ea64232d3f6`, and the repository schema/extension definitions reviewed on `repair/verified-fixes`.
+
+The CI catalog reported 25 CASCADE constraints, all validated, non-deferrable and not initially deferred. This is the intended repository-applied schema in an ephemeral CI database, not proof of the user's local/staging/production catalog. The target catalog must be re-read and compared under a separate approval before any rollout.
+
+The executable CREATE TABLE/ALTER TABLE definitions and catalog output take precedence over the stale `Foreign Keys Summary` block at the end of `POSTGRES_SCHEMA_PHASE1_FIXED.sql`. In particular, that summary incorrectly describes some product/stock-movement and business references. The CI catalog confirms `stock_product_id_fkey` is CASCADE, while the reviewed `stock_movements` product reference is not among the 25 CASCADE constraints.
+
+#### B. Proposed action matrix
+
+The following 16 constraints are proposed to change from CASCADE to RESTRICT in the dedicated business-history FK migration. RESTRICT is selected as an immediate parent-delete guard. No child rows are to be deleted by this migration.
+
+| Child table | Exact CI constraint | Parent | Proposed delete action | Reason |
+|---|---|---|---|---|
+| invoice_items | invoice_items_invoice_id_fkey | invoices | RESTRICT | Preserve committed invoice lines |
+| payment_allocations | payment_allocations_invoice_id_fkey | invoices | RESTRICT | Preserve invoice-payment allocation history |
+| payment_allocations | payment_allocations_payment_id_fkey | customer_payments | RESTRICT | Preserve payment allocation history |
+| product_units | product_units_product_id_fkey | products | RESTRICT | Prevent silent loss of product unit/conversion configuration |
+| stock | stock_product_id_fkey | products | RESTRICT | Prevent silent removal of current stock balance |
+| purchase_items | purchase_items_product_id_fkey | products | RESTRICT | Preserve purchase line/product relationship |
+| purchase_items | purchase_items_purchase_id_fkey | purchases | RESTRICT | Preserve purchase lines and receiving basis |
+| purchase_return_items | purchase_return_items_product_id_fkey | products | RESTRICT | Preserve returned-product identity |
+| purchase_return_items | purchase_return_items_return_id_fkey | purchase_returns | RESTRICT | Preserve purchase-return details |
+| return_items | return_items_return_id_fkey | sales_returns | RESTRICT | Preserve sales-return details |
+| supplier_ledger | supplier_ledger_supplier_id_fkey | suppliers | RESTRICT | Preserve supplier financial ledger |
+| supplier_payments | supplier_payments_supplier_id_fkey | suppliers | RESTRICT | Preserve supplier payment history |
+| purchase_receipt_items | purchase_receipt_items_receipt_id_fkey | purchase_receipts | RESTRICT | Preserve receipt detail by default |
+| purchase_receipt_items | fk_purchase_receipt_items_receipt_store | purchase_receipts (id, store_id) | RESTRICT | Preserve composite same-store relationship |
+| purchase_closure_items | purchase_closure_items_closure_id_fkey | purchase_closures | RESTRICT | Preserve closure detail by default |
+| purchase_closure_items | fk_purchase_closure_items_closure_store | purchase_closures (id, store_id) | RESTRICT | Preserve composite same-store relationship |
+
+The four receipt/closure constraints are deliberately retained as four separate constraints, with both single-column and composite same-store forms. They must not be collapsed into one constraint or replaced by a weaker single-column relationship.
+
+A future privileged cleanup of a genuinely uncommitted draft may explicitly remove eligible child rows before deleting the parent, but only through a separately reviewed workflow that verifies status, absence of stock/accounting effects, audit/change-log behavior, and authorization. A global FK CASCADE cannot enforce such status-dependent rules; therefore the default FK action remains RESTRICT.
+
+#### C. Explicit exclusions — nine constraints remain outside this migration
+
+| Exact CI constraint | Relationship | Treatment |
+|---|---|---|
+| brands_store_id_fkey | brands -> stores | Exclude; separate store lifecycle policy |
+| categories_store_id_fkey | categories -> stores | Exclude; separate store lifecycle policy |
+| customers_store_id_fkey | customers -> stores | Exclude; separate store lifecycle policy |
+| devices_store_id_fkey | devices -> stores | Exclude; separate device/store lifecycle policy |
+| products_store_id_fkey | products -> stores | Exclude; separate store lifecycle policy |
+| suppliers_store_id_fkey | suppliers -> stores | Exclude; separate store lifecycle policy |
+| users_store_id_fkey | users -> stores | Exclude; separate store/user lifecycle policy |
+| user_roles_user_id_fkey | user_roles -> users | Exclude; separate user deactivation/identity/audit policy |
+| store_sync_counters_store_id_fkey | store_sync_counters -> stores | Exclude; separate sync/store lifecycle policy |
+
+Exclusion is not approval for physical deletion. It means these relationships must not be modified by this business-history migration. Store shutdown/purge and user lifecycle require their own explicit policy and tests.
+
+#### D. Migration preconditions and fail-fast contract
+
+Before a future migration may run, it must:
+
+1. Verify the exact source and referenced schemas/tables, ordered source and referenced columns, constraint name, current delete action, update action, deferrability, initial deferral and validation state for every one of the 16 constraints.
+2. Abort the entire transaction if a constraint is missing, duplicated, has a different definition, references unexpected columns, is not validated, or has a different delete action from the approved baseline. No `IF EXISTS` / `IF NOT EXISTS` behavior may silently hide drift.
+3. Verify all 16 target constraints are present and validated before changing any of them.
+4. Verify the four receipt/closure constraints retain both the single-column and composite same-store forms; preserve their exact ordered column pairs.
+5. Run orphan-reference and cross-store preflight checks for relevant relationships. Any nonzero result is a stop condition requiring investigation, not automatic cleanup.
+6. Verify the intended target database identity/environment and record the catalog snapshot and migration target SHA before execution. Target execution requires separate explicit owner approval.
+
+#### E. Ordered migration behavior (design only)
+
+The eventual migration must be a single, transactionally applied migration:
+
+1. Begin transaction and acquire an explicit migration lock to prevent concurrent application of the same migration.
+2. Execute all fail-fast catalog and data preconditions before DDL.
+3. Replace only the 16 approved constraints, preserving exact names and column mappings while changing only `ON DELETE` from CASCADE to RESTRICT.
+4. Do not modify `ON UPDATE`, indexes, primary/unique keys, column nullability, deferrability, validation state, triggers, RLS, grants, or unrelated constraints.
+5. Re-query the catalog inside the transaction and assert all 16 are present, validated, non-deferrable, and RESTRICT; assert the nine excluded constraints remain CASCADE and unchanged.
+6. Commit only if every assertion passes; otherwise roll back the complete migration.
+
+This sequence is a behavioral specification, not executable SQL and not authorization to run it.
+
+#### F. Required regression matrix before acceptance
+
+- Attempt physical deletion of an invoice with invoice_items and payment allocations: parent deletion must fail and all rows remain unchanged.
+- Attempt deletion of a customer payment with allocations: deletion must fail and allocations remain.
+- Attempt deletion of a product with product_units, stock, purchase lines, or purchase-return lines: deletion must fail; soft deletion remains available and must not delete children.
+- Attempt deletion of a purchase with purchase_items, receipts, closures, or returns: deletion must fail; verify no receiving/stock/accounting side effects.
+- Attempt deletion of a sales return or purchase return with details: deletion must fail.
+- Attempt deletion of a supplier with ledger/payment history: deletion must fail.
+- Verify both single-column and composite same-store receipt/closure constraints remain validated and reject cross-store associations.
+- Verify allowed draft cleanup only through its separately authorized path, with explicit child handling, audit and Change Log coverage; no implicit cascade.
+- Verify rollback on any failed precondition/DDL assertion, concurrent migration attempts, direct-DML denial, and existing business regression suites.
+- Verify soft-delete idempotency and tombstone behavior are unchanged.
+- After the later Change Log work, verify parent/child sync semantics and Pull/ACK ordering; FK migration acceptance alone does not close Part 3-D3/D4.
+
+#### G. Outstanding evidence and scope boundary
+
+- The target database catalog/drift/data preflight from Part 3-D1 remains outstanding.
+- Business RPC and trigger call paths that may physically delete or depend on parent-child cascades must be globally reviewed before implementation; this specification does not claim that all application delete paths have been exhaustively proven safe.
+- The actual PostgreSQL trigger behavior for cascade-generated child DELETE events remains a Part 3-D3/D4 test requirement.
+- No migration SQL, test code, schema change, live database operation, staging/production operation, merge to `main`, or frontend work is included in this Part 3-D2 design step.
+
+**Decision required before the next implementation step:** owner approval of this 16-constraint action matrix and fail-fast contract. Migration authoring and test-code changes remain a separate step; database execution remains separately approved.
