@@ -100,7 +100,7 @@ CREATE INDEX idx_users_store ON users(store_id);
 -- 4. Roles & Permissions
 -- ============================================================
 CREATE TABLE roles (
-    id TEXT PRIMARY KEY CHECK(id IN ('owner', 'admin', 'accountant', 'cashier', 'stock_keeper')),
+    id TEXT PRIMARY KEY CHECK(id IN ('owner', 'cashier')),
     name TEXT NOT NULL,
     description TEXT,
     is_active BOOLEAN DEFAULT TRUE
@@ -2241,11 +2241,8 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Roles (الأدوار)
 INSERT INTO roles (id, name, description, is_active) VALUES
-('owner',        'المالك',        'صلاحيات كاملة',       TRUE),
-('admin',        'مدير',          'إدارة كاملة للمتجر',    TRUE),
-('accountant',   'محاسب',         'وصول للمالية والحسابات',TRUE),
-('cashier',      'كاشير',         'مبيعات ونقاط بيع',     TRUE),
-('stock_keeper', 'أمين مخزن',     'إدارة المخزون والشراء', TRUE)
+('owner',   'المالك', 'صلاحيات كاملة للمالك / Super Admin', TRUE),
+('cashier', 'بائع',   'المفتاح التقني المعتمد لحساب البائع', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
 -- Permissions (الصلاحيات الأساسية)
@@ -2283,31 +2280,11 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT 'owner', id FROM permissions
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Admin: كل شيء ما عدا settings.write
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT 'admin', id FROM permissions WHERE code != 'settings.write'
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Accountant: المالية والتقارير
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT 'accountant', id FROM permissions
-WHERE code IN ('reports.financial', 'reports.inventory', 'customers.read', 'suppliers.read',
-               'customers.payments', 'suppliers.payments', 'sales.read', 'purchases.read')
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
 -- Cashier: المبيعات والعملاء
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT 'cashier', id FROM permissions
 WHERE code IN ('products.read', 'inventory.read', 'sales.read', 'sales.write', 'sales.void',
                'customers.read', 'customers.write', 'customers.payments', 'reports.inventory')
-ON CONFLICT (role_id, permission_id) DO NOTHING;
-
--- Stock Keeper: المخزون والمشتريات
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT 'stock_keeper', id FROM permissions
-WHERE code IN ('products.read', 'products.write', 'inventory.read', 'inventory.write',
-               'purchases.read', 'purchases.write', 'purchases.receive', 'suppliers.read',
-               'reports.inventory')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- ============================================================
