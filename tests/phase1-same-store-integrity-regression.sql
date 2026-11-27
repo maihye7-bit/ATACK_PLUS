@@ -29,9 +29,9 @@ BEGIN
   INSERT INTO products(id,store_id,name,primary_unit_id) VALUES
     (p1,s1,'Same-store product A','pcs'),
     (p2,s2,'Same-store product B','pcs');
-  INSERT INTO invoices(id,store_id,invoice_number,type,invoice_date,created_by) VALUES
-    (inv1,s1,'SS-INV-A','SALE',NOW(),u1),
-    (inv2,s2,'SS-INV-B','SALE',NOW(),u2);
+  INSERT INTO invoices(id,store_id,invoice_number,type,invoice_date,customer_id,created_by) VALUES
+    (inv1,s1,'SS-INV-A','SALE',NOW(),cust1,u1),
+    (inv2,s2,'SS-INV-B','SALE',NOW(),NULL,u2);
   INSERT INTO purchases(id,store_id,purchase_number,supplier_id,purchase_date,created_by) VALUES
     (pur1,s1,'SS-PUR-A',sup1,NOW(),u1);
   INSERT INTO customer_payments(customer_id,amount,payment_method,created_by)
