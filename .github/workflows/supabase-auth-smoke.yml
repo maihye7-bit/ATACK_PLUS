@@ -61,6 +61,7 @@ jobs:
           apply_sql docs/ATACK_PLUS_PHASE3_USER_ACCOUNT_SECURITY.sql
           apply_sql docs/ATACK_PLUS_PHASE3_SECURITY_CATALOG_HARDENING.sql
           apply_sql docs/ATACK_PLUS_PHASE3_RBAC_READ_HARDENING.sql
+          apply_sql docs/ATACK_PLUS_PHASE3_OWNER_SELLER_ROLE_CONSOLIDATION.sql
 
       - name: Run real Auth and PostgREST integration smoke test
         run: bash tests/supabase-auth-smoke.sh
