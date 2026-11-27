@@ -80,22 +80,24 @@ Tests:
 
 **Gate G1:** Complete relationship matrix, passing negative/positive tests, no silent data changes or loss.
 
-### Implementation update — 2026-11-27 (Part A)
+### Implementation update — 2026-11-27 (Stage 1 implementation)
 
-**Status:** Part A implemented on `repair/verified-fixes`; Stage 1 / Gate G1 remains open pending the complete relationship audit of all Phase 3 extension tables and a final data-preflight review.
+**Status:** Stage 1 same-store integrity implementation is complete on `repair/verified-fixes`; code and CI acceptance checks pass. Applying the migrations to a real staging dataset and reviewing any legacy-data preflight failures remain deployment acceptance tasks.
 
-Implemented:
-- Extended `validate_same_store_references()` with row-level `FOR SHARE` locks on referenced parents.
-- Validated stock-movement references against their actual source tables: invoices, purchases, stock adjustments, sales returns and purchase returns. The shared `return` reference type must resolve to exactly one return row.
-- Required `reference_type` and `reference_id` to be both NULL or both populated.
-- Added parent ownership guards so store reassignment is rejected when dependent business history exists for products, users, invoices, purchases, sales returns, purchase returns, stock adjustments, customers and suppliers.
-- Added positive/negative regression coverage and two-session parent-first/child-first concurrency tests.
+Implemented across three ordered migrations:
+- `PHASE1_REPAIR_001_SAME_STORE_INTEGRITY.sql`: hardened stock-movement references, parent-row locking, and parent ownership guards.
+- `PHASE1_REPAIR_002_EXTENSION_SAME_STORE.sql`: composite same-store constraints and reference validation for purchase receiving, closures, amendments, purchase/sales returns, inventory batches, stock alerts, customer/supplier ledgers, chart of accounts and journals.
+- `PHASE1_REPAIR_003_SYNC_AUDIT_SAME_STORE.sql`: device/store validation, sync cursor/outbox/log checks, conflict target identity, tombstone target validation and audit-device checks.
 
-**CI evidence (disposable PostgreSQL/Auth-shim environment only):**
-- SQL migration and full regression workflow: [run 45990947758](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45990947758) — PASS, commit `a105040926d2637fc735adc40fcb88a8a6af0d91`.
-- Supabase Auth smoke workflow: [run 45990947866](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45990947866) — PASS, same commit.
+Regression coverage includes cross-store rejection, valid same-store operations, legacy-data preflight, return and ledger source matching, journal/general-ledger source matching, outbox/conflict identity, and two-session parent-first/child-first concurrency.
 
-**Boundary:** These results do not prove real Supabase staging/production behavior. They also do not close Gate G1: the remaining Phase 3 extension relationships (including receiving, return-item, batch, accounting and sync-related references) still require a complete matrix review before Stage 1 can be accepted.
+**CI evidence on commit `837f81ead33df7b936e86d011b749d4f9b78fc6d`:**
+- [SQL migration and full regression workflow — run 45995177555](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45995177555) — PASS.
+- [Supabase Auth integration workflow — run 45995177653](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/45995177653) — PASS.
+
+The purchase-amendment RPC was adjusted to persist its amendment source before writing a supplier-ledger row that references it; the transaction still rolls back both together on failure.
+
+**Deployment boundary:** CI used an isolated PostgreSQL/Auth compatibility environment. The migrations include preflight checks that validate existing rows when applied, but those checks have not been run against the user's staging or production data. No production database was changed, no merge to `main` was performed, and frontend/UI behavior was not part of this database-only stage.
 
 ## 6. Stage 2 — Soft deletion, tombstones and product retention
 
