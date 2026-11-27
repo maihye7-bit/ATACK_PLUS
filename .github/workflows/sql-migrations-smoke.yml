@@ -80,10 +80,18 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE1_REPAIR_001_SAME_STORE_INTEGRITY.sql"
+      - name: Apply Phase 1 extension same-store integrity repair
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE1_REPAIR_002_EXTENSION_SAME_STORE.sql"
       - name: Run Phase 1 same-store integrity regression
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase1-same-store-integrity-regression.sql"
+      - name: Run Phase 1 extension same-store integrity regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase1-extension-same-store-regression.sql"
       - name: Run same-store parent-child concurrency regression
         env:
           PGPASSWORD: postgres
