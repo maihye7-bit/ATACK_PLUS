@@ -319,8 +319,10 @@ BEGIN
      total_debit,total_credit,posted_by)
    VALUES('83000000-0000-4000-8000-000000000080',v_store,'ACC-UNBALANCED',NOW(),
      'ADJUSTMENT','83000000-0000-4000-8000-000000000081',1,1,v_user);
-   INSERT INTO public.general_ledger(store_id,journal_entry_id,account_id,entry_type,amount,created_by)
-   SELECT v_store,'83000000-0000-4000-8000-000000000080',id,'DEBIT',1,v_user
+   INSERT INTO public.general_ledger(store_id,journal_entry_id,account_id,entry_type,amount,
+     reference_id,reference_table,created_by)
+   SELECT v_store,'83000000-0000-4000-8000-000000000080',id,'DEBIT',1,
+     '83000000-0000-4000-8000-000000000081','ADJUSTMENT',v_user
      FROM public.chart_of_accounts WHERE store_id=v_store AND account_code='1200';
    SET CONSTRAINTS trg_validate_journal_header_balance,trg_validate_general_ledger_balance IMMEDIATE;
    RAISE EXCEPTION 'Unbalanced journal was unexpectedly accepted';
