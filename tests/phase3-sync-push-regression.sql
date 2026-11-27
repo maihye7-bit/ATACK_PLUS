@@ -1,5 +1,27 @@
 -- Phase 3 Push/Outbox, tombstone and conflict-resolution regressions.
 -- Requires Phase 2 fixtures plus Phase 3 Sync Pull/ACK fixtures.
+
+-- Inject a deterministic audit failure for one dedicated fixture to prove the
+-- tombstone and live-row mutation are rolled back in the same transaction.
+CREATE OR REPLACE FUNCTION pg_temp.fail_soft_delete_audit_for_rollback_test()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $rollback_test$
+BEGIN
+  IF NEW.entity_type='categories'
+     AND NEW.entity_id='93000000-0000-4000-8000-000000000003'::UUID
+     AND NEW.action='DELETE' THEN
+    RAISE EXCEPTION 'forced soft-delete audit failure' USING ERRCODE='P0001';
+  END IF;
+  RETURN NEW;
+END;
+$rollback_test$;
+
+DROP TRIGGER IF EXISTS trg_test_soft_delete_audit_failure ON public.audit_logs;
+CREATE TRIGGER trg_test_soft_delete_audit_failure
+BEFORE INSERT ON public.audit_logs
+FOR EACH ROW EXECUTE FUNCTION pg_temp.fail_soft_delete_audit_for_rollback_test();
+
 DO $push_outbox_regression$
 DECLARE
   v_store UUID := '10000000-0000-4000-8000-000000000001';
@@ -24,6 +46,8 @@ DECLARE
   v_audit_count_before BIGINT;
   v_change_count_before BIGINT;
   v_deleted_at_before TIMESTAMPTZ;
+  v_rollback_category UUID := '93000000-0000-4000-8000-000000000003';
+  v_rollback_error TEXT;
 BEGIN
   PERFORM set_config('request.jwt.claim.sub',v_auth::TEXT,TRUE);
 
@@ -241,6 +265,25 @@ BEGIN
      RAISE EXCEPTION 'Brand soft delete did not persist its lifecycle state and tombstone';
    END IF;
 
+  -- An injected audit failure must roll back both the tombstone and live-row UPDATE.
+  INSERT INTO public.categories(id,store_id,name,is_active)
+  VALUES(v_rollback_category,v_store,'Soft-delete rollback fixture',TRUE);
+  v_rollback_error := NULL;
+  BEGIN
+    PERFORM public.soft_delete_record('categories',v_rollback_category,v_store,v_user);
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_rollback_error = MESSAGE_TEXT;
+  END;
+  IF v_rollback_error IS DISTINCT FROM 'forced soft-delete audit failure' THEN
+    RAISE EXCEPTION 'Expected injected audit failure, received: %',v_rollback_error;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.categories
+      WHERE id=v_rollback_category AND store_id=v_store AND is_active=TRUE)
+     OR EXISTS(SELECT 1 FROM public.tombstones
+      WHERE store_id=v_store AND table_name='categories' AND record_uuid=v_rollback_category) THEN
+    RAISE EXCEPTION 'Soft-delete audit failure did not roll back row state and tombstone atomically';
+  END IF;
+
   -- Generic conflict resolution cannot edit role grants or protected financial fields.
   INSERT INTO public.sync_conflicts(id,store_id,table_name,record_uuid,conflict_type,
     local_record_json,remote_record_json)
@@ -274,3 +317,7 @@ BEGIN
   RAISE NOTICE 'PASS: authenticated Push, Outbox idempotency, protected fields, rollback/retry, tombstones and audited conflict resolution';
 END
 $push_outbox_regression$;
+
+
+DROP TRIGGER IF EXISTS trg_test_soft_delete_audit_failure ON public.audit_logs;
+DROP FUNCTION IF EXISTS pg_temp.fail_soft_delete_audit_for_rollback_test();
