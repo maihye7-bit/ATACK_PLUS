@@ -9,7 +9,7 @@ INSERT INTO public.permissions(code,description)
 VALUES ('purchases.close_remaining','Authorize closing unreceived purchase quantities')
 ON CONFLICT(code) DO NOTHING;
 INSERT INTO public.role_permissions(role_id,permission_id)
-SELECT r.role_id,p.id FROM (VALUES ('owner'),('admin')) r(role_id)
+SELECT r.role_id,p.id FROM (VALUES ('owner')) r(role_id)
 JOIN public.permissions p ON p.code='purchases.close_remaining'
 ON CONFLICT(role_id,permission_id) DO NOTHING;
 
@@ -112,7 +112,7 @@ INSERT INTO public.permissions(code,description) VALUES
  ('purchases.edit_after_receipt','Amend purchase after partial receipt')
 ON CONFLICT(code) DO NOTHING;
 INSERT INTO public.role_permissions(role_id,permission_id)
-SELECT r.role_id,p.id FROM (VALUES('owner'),('admin')) r(role_id)
+SELECT r.role_id,p.id FROM (VALUES('owner')) r(role_id)
 JOIN public.permissions p ON p.code IN
  ('purchases.close_remaining','purchases.receive_excess','purchases.receive_substitute','purchases.edit_after_receipt')
 ON CONFLICT(role_id,permission_id) DO NOTHING;
