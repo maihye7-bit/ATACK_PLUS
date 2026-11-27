@@ -10,6 +10,7 @@ DECLARE
   p1 UUID := gen_random_uuid();
   p2 UUID := gen_random_uuid();
   sup1 UUID := gen_random_uuid();
+  cust1 UUID := gen_random_uuid();
   inv1 UUID := gen_random_uuid();
   inv2 UUID := gen_random_uuid();
   pur1 UUID := gen_random_uuid();
@@ -23,7 +24,8 @@ BEGIN
     (u1,s1,'same_store_owner_a','Same Store Owner A'),
     (u2,s2,'same_store_owner_b','Same Store Owner B');
   INSERT INTO suppliers(id,store_id,code,name) VALUES
-    (sup1,s1,'SS-SUP-A','Same-store supplier A');
+    (sup1,s1,'SS-SUP-A','Same-store supplier A',100);
+  INSERT INTO customers(id,store_id,code,name) VALUES (cust1,s1,'SS-CUS-A','Same-store customer A');
   INSERT INTO products(id,store_id,name,primary_unit_id) VALUES
     (p1,s1,'Same-store product A','pcs'),
     (p2,s2,'Same-store product B','pcs');
@@ -32,6 +34,14 @@ BEGIN
     (inv2,s2,'SS-INV-B','SALE',NOW(),u2);
   INSERT INTO purchases(id,store_id,purchase_number,supplier_id,purchase_date,created_by) VALUES
     (pur1,s1,'SS-PUR-A',sup1,NOW(),u1);
+  INSERT INTO customer_payments(customer_id,amount,payment_method,created_by)
+    VALUES(cust1,1,'CASH',u1);
+  INSERT INTO customer_ledgers(customer_id,type,amount,balance,created_by)
+    VALUES(cust1,'SALE',1,1,u1);
+  INSERT INTO supplier_payments(supplier_id,amount,payment_method,created_by)
+    VALUES(sup1,1,'CASH',u1);
+  INSERT INTO supplier_ledger(supplier_id,type,amount,balance,created_by)
+    VALUES(sup1,'PURCHASE',1,1,u1);
   INSERT INTO sales_returns(id,store_id,return_number,original_invoice_id,created_by) VALUES
     (ret1,s1,'SS-RET-A',inv1,u1);
   INSERT INTO purchase_returns(id,store_id,return_number,original_purchase_id,created_by) VALUES
@@ -103,7 +113,56 @@ BEGIN
     UPDATE users SET store_id=s2 WHERE id=u1;
   EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
   END;
-  IF NOT v_failed THEN RAISE EXCEPTION 'User store reassignment with movement history was accepted'; END IF;
+  IF NOT v_failed THEN RAISE EXCEPTION 'User store reassignment with dependent history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE invoices SET store_id=s2 WHERE id=inv1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Invoice store reassignment with dependent history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE purchases SET store_id=s2 WHERE id=pur1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Purchase store reassignment with dependent history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE sales_returns SET store_id=s2 WHERE id=ret1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Sales return store reassignment with dependent history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE purchase_returns SET store_id=s2 WHERE id=pret1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Purchase return store reassignment with dependent history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE stock_adjustments SET store_id=s2 WHERE id=adj1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Stock adjustment store reassignment with dependent history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE customers SET store_id=s2 WHERE id=cust1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Customer store reassignment with dependent history was accepted'; END IF;
+
+  v_failed := FALSE;
+  BEGIN
+    UPDATE suppliers SET store_id=s2 WHERE id=sup1;
+  EXCEPTION WHEN OTHERS THEN v_failed := TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Supplier store reassignment with dependent history was accepted'; END IF;
 
   RAISE NOTICE 'PASS: same-store stock movement references, cross-store rejection and NULL contract';
 END
