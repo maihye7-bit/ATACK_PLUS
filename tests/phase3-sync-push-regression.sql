@@ -41,6 +41,7 @@ DECLARE
   v_child UUID := '93000000-0000-4000-8000-000000000002';
   v_conflict UUID := '94000000-0000-4000-8000-000000000001';
   v_role_conflict UUID := '94000000-0000-4000-8000-000000000002';
+  v_reactivation_conflict UUID := '94000000-0000-4000-8000-000000000003';
   v_brand UUID := '93000000-0000-4000-8000-000000000020';
   v_tombstone UUID;
   v_audit_count_before BIGINT;
@@ -264,6 +265,27 @@ BEGIN
         WHERE store_id=v_store AND table_name='brands' AND record_uuid=v_brand AND deleted_by=v_user) THEN
      RAISE EXCEPTION 'Brand soft delete did not persist its lifecycle state and tombstone';
    END IF;
+
+  -- Generic conflict resolution must not reactivate a record with a tombstone.
+  INSERT INTO public.sync_conflicts(id,store_id,table_name,record_uuid,conflict_type,
+    local_record_json,remote_record_json)
+  VALUES(v_reactivation_conflict,v_store,'categories',v_child,'DUPLICATE',
+    jsonb_build_object('id',v_child,'store_id',v_store,'name','Deleted category','is_active',FALSE),
+    jsonb_build_object('id',v_child,'store_id',v_store,'name','Attempted revival','is_active',TRUE));
+  v_denied := FALSE;
+  BEGIN
+    PERFORM public.resolve_sync_conflict(v_reactivation_conflict,'ACCEPT_REMOTE',v_user,NULL);
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    GET STACKED DIAGNOSTICS v_error = MESSAGE_TEXT;
+    IF v_error NOT LIKE '%Cannot reactivate a tombstoned record%' THEN RAISE; END IF;
+    v_denied := TRUE;
+  END;
+  IF NOT v_denied
+     OR NOT EXISTS(SELECT 1 FROM public.categories WHERE id=v_child AND is_active=FALSE)
+     OR NOT EXISTS(SELECT 1 FROM public.sync_conflicts
+       WHERE id=v_reactivation_conflict AND resolution_status='PENDING') THEN
+    RAISE EXCEPTION 'Generic conflict resolution reactivated a tombstoned record or consumed the pending conflict';
+  END IF;
 
   -- An injected audit failure must roll back both the tombstone and live-row UPDATE.
   INSERT INTO public.categories(id,store_id,name,is_active)
