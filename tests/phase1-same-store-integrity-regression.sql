@@ -36,12 +36,12 @@ BEGIN
     (pur1,s1,'SS-PUR-A',sup1,NOW(),u1);
   INSERT INTO customer_payments(customer_id,amount,payment_method,created_by)
     VALUES(cust1,1,'CASH',u1);
-  INSERT INTO customer_ledgers(customer_id,type,amount,balance,created_by)
-    VALUES(cust1,'SALE',1,1,u1);
+  INSERT INTO customer_ledgers(customer_id,type,amount,balance,reference_id,created_by)
+    VALUES(cust1,'SALE',1,1,inv1,u1);
   INSERT INTO supplier_payments(supplier_id,amount,payment_method,created_by)
     VALUES(sup1,1,'CASH',u1);
-  INSERT INTO supplier_ledger(supplier_id,type,amount,balance,created_by)
-    VALUES(sup1,'PURCHASE',1,1,u1);
+  INSERT INTO supplier_ledger(supplier_id,type,amount,balance,reference_id,created_by)
+    VALUES(sup1,'PURCHASE',1,1,pur1,u1);
   INSERT INTO sales_returns(id,store_id,return_number,original_invoice_id,created_by) VALUES
     (ret1,s1,'SS-RET-A',inv1,u1);
   INSERT INTO purchase_returns(id,store_id,return_number,original_purchase_id,created_by) VALUES
