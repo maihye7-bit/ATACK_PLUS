@@ -680,3 +680,18 @@ evidenced:
 **Next decision:** owner approval of this plan and its implementation scope.
 Only after approval may Part 3-D1/D2 code and test changes begin. SQL
 execution against a database remains a separate approval.
+
+
+### 19.7 Part 3-D1 preparation update — 2026-11-27
+
+**Status:** Diagnostic artifact prepared; execution and database findings remain pending.
+
+Added `tests/phase2-fk-catalog-preflight.sql` on `repair/verified-fixes`. The script is explicitly read-only and reports:
+- Every declared FK's source/target schema, table and ordered columns.
+- ON DELETE / ON UPDATE actions, deferrability, initial deferral and validation state.
+- Per-FK orphan-reference row counts.
+- Cross-store reference counts when both related tables expose `store_id` and the FK does not bind those store columns together.
+
+The script uses a read-only transaction and rolls it back. It does not create persistent objects or modify rows. It has **not** been executed or validated against PostgreSQL yet. The next action is a separate owner approval to execute it against an isolated local test database. No staging/production execution is authorized.
+
+The existing SQL CI workflow provisions an ephemeral PostgreSQL 16 service and applies the repository schema/migrations, but Part 3-D1 has not been added to that workflow and no CI run has been triggered for this diagnostic.
