@@ -19,6 +19,11 @@ DECLARE
   v_child UUID := '93000000-0000-4000-8000-000000000002';
   v_conflict UUID := '94000000-0000-4000-8000-000000000001';
   v_role_conflict UUID := '94000000-0000-4000-8000-000000000002';
+  v_brand UUID := '93000000-0000-4000-8000-000000000020';
+  v_tombstone UUID;
+  v_audit_count_before BIGINT;
+  v_change_count_before BIGINT;
+  v_deleted_at_before TIMESTAMPTZ;
 BEGIN
   PERFORM set_config('request.jwt.claim.sub',v_auth::TEXT,TRUE);
 
@@ -197,6 +202,44 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Tombstone was not exposed through incremental Pull';
   END IF;
+
+   -- Replaying a completed soft delete must not emit another audit or change-log event.
+   SELECT id,deleted_at INTO v_tombstone,v_deleted_at_before
+     FROM public.tombstones
+    WHERE store_id=v_store AND table_name='categories' AND record_uuid=v_child;
+   SELECT count(*) INTO v_audit_count_before FROM public.audit_logs
+    WHERE store_id=v_store AND entity_type='categories' AND entity_id=v_child AND action='DELETE';
+   SELECT count(*) INTO v_change_count_before FROM public.change_log
+    WHERE store_id=v_store
+      AND ((table_name='categories' AND record_uuid=v_child)
+        OR (table_name='tombstones' AND record_uuid=v_tombstone));
+   PERFORM public.soft_delete_record('categories',v_child,v_store,v_user);
+   IF (SELECT count(*) FROM public.audit_logs
+        WHERE store_id=v_store AND entity_type='categories' AND entity_id=v_child AND action='DELETE')
+        IS DISTINCT FROM v_audit_count_before THEN
+     RAISE EXCEPTION 'Repeated soft delete created a duplicate audit record';
+   END IF;
+   IF (SELECT count(*) FROM public.change_log
+        WHERE store_id=v_store
+          AND ((table_name='categories' AND record_uuid=v_child)
+            OR (table_name='tombstones' AND record_uuid=v_tombstone)))
+        IS DISTINCT FROM v_change_count_before THEN
+     RAISE EXCEPTION 'Repeated soft delete emitted duplicate change-log events';
+   END IF;
+   IF (SELECT deleted_at FROM public.tombstones WHERE id=v_tombstone)
+        IS DISTINCT FROM v_deleted_at_before THEN
+     RAISE EXCEPTION 'Repeated soft delete changed the original tombstone timestamp';
+   END IF;
+
+   -- Brands must have the lifecycle column used by the shared soft-delete RPC.
+   INSERT INTO public.brands(id,store_id,name,is_active)
+   VALUES(v_brand,v_store,'Soft-delete regression brand',TRUE);
+   PERFORM public.soft_delete_record('brands',v_brand,v_store,v_user);
+   IF NOT EXISTS(SELECT 1 FROM public.brands WHERE id=v_brand AND store_id=v_store AND is_active=FALSE)
+      OR NOT EXISTS(SELECT 1 FROM public.tombstones
+        WHERE store_id=v_store AND table_name='brands' AND record_uuid=v_brand AND deleted_by=v_user) THEN
+     RAISE EXCEPTION 'Brand soft delete did not persist its lifecycle state and tombstone';
+   END IF;
 
   -- Generic conflict resolution cannot edit role grants or protected financial fields.
   INSERT INTO public.sync_conflicts(id,store_id,table_name,record_uuid,conflict_type,
