@@ -5,7 +5,7 @@ DECLARE
   s1 UUID:=gen_random_uuid(); s2 UUID:=gen_random_uuid();
   u1 UUID:=gen_random_uuid(); u2 UUID:=gen_random_uuid();
   d1 UUID:=gen_random_uuid(); d2 UUID:=gen_random_uuid();
-  p1 UUID:=gen_random_uuid(); p2 UUID:=gen_random_uuid();
+  p1 UUID:=gen_random_uuid(); p2 UUID:=gen_random_uuid(); sm2 UUID:=gen_random_uuid();
   v_failed BOOLEAN;
 BEGIN
   INSERT INTO public.stores(id,name) VALUES(s1,'Sync integrity A'),(s2,'Sync integrity B');
@@ -17,6 +17,8 @@ BEGIN
     (d2,s2,'sync-device-b','PHONE');
   INSERT INTO public.products(id,store_id,name,primary_unit_id) VALUES
     (p1,s1,'Sync product A','pcs'),(p2,s2,'Sync product B','pcs');
+  INSERT INTO public.stock_movements(id,product_id,type,quantity,unit_id,cost_per_unit,total_value,user_id)
+    VALUES(sm2,p2,'IN',1,'pcs',1,1,u2);
 
   INSERT INTO public.sync_cursors(store_id,device_id,table_name,last_pull_seq)
     VALUES(s1,d1::TEXT,'products',0);
@@ -43,6 +45,16 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN v_failed:=TRUE;
   END;
   IF NOT v_failed THEN RAISE EXCEPTION 'Cross-store sync cursor device was accepted'; END IF;
+
+  v_failed:=FALSE;
+  BEGIN
+    INSERT INTO public.sync_outbox(store_id,device_id,table_name,operation,record_uuid,
+      idempotency_key,record_json,payload_hash)
+      VALUES(s1,d1::TEXT,'products','INSERT',p1,gen_random_uuid(),
+        jsonb_build_object('id',p1,'store_id',s2),'bad-sync-hash');
+  EXCEPTION WHEN OTHERS THEN v_failed:=TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Outbox payload with a different store was accepted'; END IF;
 
   v_failed:=FALSE;
   BEGIN
@@ -78,6 +90,17 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN v_failed:=TRUE;
   END;
   IF NOT v_failed THEN RAISE EXCEPTION 'Cross-store sync conflict snapshot was accepted'; END IF;
+
+  v_failed:=FALSE;
+  BEGIN
+    INSERT INTO public.sync_conflicts(store_id,table_name,record_uuid,conflict_type,
+      local_record_json,remote_record_json,resolved_by)
+      VALUES(s1,'stock_movements',sm2,'INVENTORY',
+        jsonb_build_object('id',sm2,'store_id',s1),
+        jsonb_build_object('id',sm2,'store_id',s1),u1);
+  EXCEPTION WHEN OTHERS THEN v_failed:=TRUE;
+  END;
+  IF NOT v_failed THEN RAISE EXCEPTION 'Cross-store sync conflict target was accepted'; END IF;
 
   v_failed:=FALSE;
   BEGIN
