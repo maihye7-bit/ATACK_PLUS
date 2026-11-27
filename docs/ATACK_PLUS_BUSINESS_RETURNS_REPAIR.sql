@@ -40,7 +40,7 @@ VALUES ('purchases.return','Authorize purchase returns')
 ON CONFLICT (code) DO NOTHING;
 INSERT INTO public.role_permissions(role_id,permission_id)
 SELECT r.role_id,p.id
-  FROM (VALUES ('owner'),('admin')) AS r(role_id)
+  FROM (VALUES ('owner')) AS r(role_id)
   CROSS JOIN public.permissions p
  WHERE p.code='purchases.return'
 ON CONFLICT (role_id,permission_id) DO NOTHING;
