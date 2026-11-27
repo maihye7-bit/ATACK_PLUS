@@ -16,22 +16,7 @@ $precondition$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_id_store_repair ON public.devices(id,store_id);
 
-DO $sync_fks$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.sync_conflicts'::regclass AND conname='fk_sync_conflicts_resolver_store') THEN
-    ALTER TABLE public.sync_conflicts ADD CONSTRAINT fk_sync_conflicts_resolver_store
-      FOREIGN KEY(resolved_by,store_id) REFERENCES public.users(id,store_id);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.tombstones'::regclass AND conname='fk_tombstones_deleter_store') THEN
-    ALTER TABLE public.tombstones ADD CONSTRAINT fk_tombstones_deleter_store
-      FOREIGN KEY(deleted_by,store_id) REFERENCES public.users(id,store_id);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.audit_logs'::regclass AND conname='fk_audit_logs_actor_store') THEN
-    ALTER TABLE public.audit_logs ADD CONSTRAINT fk_audit_logs_actor_store
-      FOREIGN KEY(user_id,store_id) REFERENCES public.users(id,store_id);
-  END IF;
-END
-$sync_fks$;
+
 
 CREATE OR REPLACE FUNCTION public.validate_sync_device_store()
 RETURNS TRIGGER AS $$
@@ -137,6 +122,37 @@ FOR EACH ROW EXECUTE FUNCTION public.validate_sync_conflict_store_payload();
 DROP TRIGGER IF EXISTS trg_devices_store_immutable_with_history ON public.devices;
 CREATE TRIGGER trg_devices_store_immutable_with_history BEFORE UPDATE OF store_id ON public.devices
 FOR EACH ROW EXECUTE FUNCTION public.prevent_device_store_reassignment();
+
+-- Validate existing tombstone and conflict identities before installing the new contract.
+DO $record_preflight$
+DECLARE
+  r RECORD;
+  v_target_store UUID;
+BEGIN
+  FOR r IN SELECT store_id,table_name,record_uuid FROM public.tombstones LOOP
+    IF r.table_name NOT IN ('categories','brands','products','customers','suppliers') THEN
+      RAISE EXCEPTION 'Existing tombstone table % is outside the supported soft-delete allowlist',r.table_name;
+    END IF;
+    EXECUTE format('SELECT store_id FROM public.%I WHERE id=$1',r.table_name)
+      INTO v_target_store USING r.record_uuid;
+    IF v_target_store IS NULL OR v_target_store IS DISTINCT FROM r.store_id THEN
+      RAISE EXCEPTION 'Existing tombstone target %/% is missing or belongs to another store',r.table_name,r.record_uuid;
+    END IF;
+  END LOOP;
+
+  IF EXISTS (
+    SELECT 1 FROM public.sync_conflicts sc
+    WHERE (sc.local_record_json ? 'store_id'
+       AND NULLIF(sc.local_record_json->>'store_id','')::UUID IS DISTINCT FROM sc.store_id)
+       OR (sc.remote_record_json ? 'store_id'
+       AND NULLIF(sc.remote_record_json->>'store_id','')::UUID IS DISTINCT FROM sc.store_id)
+       OR (sc.local_record_json ? 'id'
+       AND NULLIF(sc.local_record_json->>'id','')::UUID IS DISTINCT FROM sc.record_uuid)
+       OR (sc.remote_record_json ? 'id'
+       AND NULLIF(sc.remote_record_json->>'id','')::UUID IS DISTINCT FROM sc.record_uuid)
+  ) THEN RAISE EXCEPTION 'Existing sync_conflicts contain snapshots with mismatched record/store identity'; END IF;
+END
+$record_preflight$;
 
 -- Validate historical device links before accepting the new trigger contract.
 DO $sync_preflight$
