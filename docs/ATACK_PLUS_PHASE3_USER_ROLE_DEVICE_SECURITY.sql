@@ -40,7 +40,7 @@ REVOKE ALL ON TABLE public.user_roles FROM PUBLIC,anon,authenticated;
 GRANT SELECT ON TABLE public.user_roles TO authenticated;
 
 -- Only a caller whose effective permissions cover the target role may grant
--- or revoke it. This prevents an admin from granting/revoking owner privileges.
+-- or revoke it. This prevents any delegated identity from escalating privileges.
 CREATE OR REPLACE FUNCTION public.manage_store_user_role(
   p_target_user_id UUID,
   p_role_id TEXT,
