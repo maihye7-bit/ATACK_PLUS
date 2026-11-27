@@ -497,6 +497,19 @@ BEGIN
     IF v_final IS NULL OR jsonb_typeof(v_final)<>'object' THEN
         RAISE EXCEPTION 'Resolution payload must be a JSON object';
     END IF;
+
+    -- A tombstone marks a terminal soft-delete. Generic conflict resolution may
+    -- reconcile metadata, but it must never silently restore a deleted record.
+    -- A future restore flow must be a dedicated, separately audited operation.
+    IF v_final ? 'is_active' AND (v_final->>'is_active')::BOOLEAN IS TRUE
+       AND EXISTS (
+         SELECT 1 FROM public.tombstones ts
+          WHERE ts.store_id=v_conflict.store_id
+            AND ts.table_name=v_conflict.table_name
+            AND ts.record_uuid=v_conflict.record_uuid
+       ) THEN
+        RAISE EXCEPTION 'Cannot reactivate a tombstoned record; use a dedicated restore workflow';
+    END IF;
     IF (v_final ? 'id' AND NULLIF(v_final->>'id','')::UUID IS DISTINCT FROM v_conflict.record_uuid)
        OR (v_final ? 'store_id' AND NULLIF(v_final->>'store_id','')::UUID IS DISTINCT FROM v_conflict.store_id) THEN
         RAISE EXCEPTION 'Resolution cannot change record identity or store';
