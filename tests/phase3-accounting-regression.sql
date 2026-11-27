@@ -307,6 +307,12 @@ BEGIN
    RAISE EXCEPTION 'Income statement does not show revenue and COGS with positive normal balances';
  END IF;
 
+ -- Use a real same-store adjustment source so the test reaches the deferred balance guard.
+ INSERT INTO public.stock_adjustments(id,store_id,adjustment_number,product_id,adjustment_type,
+   reason,quantity,unit_id,cost_per_unit,total_value,created_by)
+ VALUES('83000000-0000-4000-8000-000000000081',v_store,'ACC-ADJ-081',v_product,
+   'INCREASE','unbalanced journal source fixture',1,'pcs',1,1,v_user);
+
  -- A malformed journal must be rejected by the deferred database invariant.
  BEGIN
    INSERT INTO public.journal_entries(id,store_id,entry_number,entry_date,source_type,source_id,
