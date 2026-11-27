@@ -251,6 +251,61 @@ APPLY_RESULT="$(rpc_call "$OWNER_TOKEN" "apply_outbox_operation" "$APPLY_ARGS")"
 [[ "$(jq -r '.success' <<<"$APPLY_RESULT")" == "true" ]] || { echo "JWT Outbox apply failed: $APPLY_RESULT" >&2; exit 1; }
 APPLY_REPLAY="$(rpc_call "$OWNER_TOKEN" "apply_outbox_operation" "$APPLY_ARGS")"
 [[ "$(jq -r '.success' <<<"$APPLY_REPLAY")" == "true" && "$(jq -r '.duplicate' <<<"$APPLY_REPLAY")" == "true" ]] || { echo "JWT Outbox apply replay was not idempotent: $APPLY_REPLAY" >&2; exit 1; }
+
+echo "Verifying direct master-data writes are blocked while the audited soft-delete RPC remains available..."
+for method in PATCH DELETE; do
+  if [[ "$method" == "PATCH" ]]; then
+    status="$(curl --silent --show-error -o /tmp/atack-direct-write.json -w '%{http_code}' \
+      -X PATCH "${API_URL}/rest/v1/categories?id=eq.${OUTBOX_CATEGORY_ID}" \
+      -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}" \
+      -H "Content-Type: application/json" -H "Prefer: return=representation" \
+      --data '{"name":"DIRECT-WRITE-MUST-BE-BLOCKED"}')"
+  else
+    status="$(curl --silent --show-error -o /tmp/atack-direct-write.json -w '%{http_code}' \
+      -X DELETE "${API_URL}/rest/v1/categories?id=eq.${OUTBOX_CATEGORY_ID}" \
+      -H "apikey: ${ANON_KEY}" -H "Authorization: Bearer ${OWNER_TOKEN}" \
+      -H "Prefer: return=representation")"
+  fi
+  body="$(cat /tmp/atack-direct-write.json)"
+  if [[ "$status" =~ ^2 ]] && [[ "$(jq 'length' <<<"$body" 2>/dev/null || echo 0)" -gt 0 ]]; then
+    echo "Direct $method unexpectedly changed a master-data row: HTTP $status $body" >&2
+    exit 1
+  fi
+done
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v category_id="$OUTBOX_CATEGORY_ID" <<'SQL'
+DO $assert_direct_write_blocked$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.categories
+    WHERE id=current_setting('atack.test.category_id',true)::uuid
+      AND name='JWT Outbox category' AND is_active=TRUE) THEN
+    RAISE EXCEPTION 'Direct PostgREST UPDATE/DELETE altered the category';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tombstones
+    WHERE table_name='categories'
+      AND record_uuid=current_setting('atack.test.category_id',true)::uuid) THEN
+    RAISE EXCEPTION 'Direct PostgREST write unexpectedly created a tombstone';
+  END IF;
+END
+$assert_direct_write_blocked$;
+SQL
+SOFT_DELETE_ARGS="$(jq -nc --arg table "categories" --arg record "$OUTBOX_CATEGORY_ID" --arg store "$STORE_A" --arg user "$USER_A" \
+  '{p_table_name:$table,p_record_uuid:$record,p_store_id:$store,p_deleted_by:$user}')"
+rpc_call "$OWNER_TOKEN" "soft_delete_record" "$SOFT_DELETE_ARGS" >/dev/null
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v category_id="$OUTBOX_CATEGORY_ID" <<'SQL'
+DO $assert_soft_delete_rpc$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.categories
+    WHERE id=current_setting('atack.test.category_id',true)::uuid AND is_active=TRUE) THEN
+    RAISE EXCEPTION 'soft_delete_record did not deactivate the category';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.tombstones
+    WHERE table_name='categories'
+      AND record_uuid=current_setting('atack.test.category_id',true)::uuid) THEN
+    RAISE EXCEPTION 'soft_delete_record did not create the tombstone';
+  END IF;
+END
+$assert_soft_delete_rpc$;
+SQL
 CROSS_STORE_ARGS="$(jq -nc --arg device "$SYNC_DEVICE_A" --arg record "a7000000-0000-4000-8000-000000000004" --arg key "a7000000-0000-4000-8000-000000000005" '{p_store_id:"b1000000-0000-4000-8000-000000000002",p_device_id:$device,p_table_name:"categories",p_operation:"INSERT",p_record_uuid:$record,p_idempotency_key:$key,p_record_json:{id:$record,store_id:"b1000000-0000-4000-8000-000000000002",name:"Cross-store JWT Push"}}')"
 expect_rpc_error "JWT Push targeting another store" "$OWNER_TOKEN" "create_outbox_entry" "$CROSS_STORE_ARGS" "P0001"
 PROTECTED_PUSH_ARGS="$(jq -nc --arg store "$STORE_A" --arg device "$SYNC_DEVICE_A" --arg record "a7000000-0000-4000-8000-000000000006" --arg key "a7000000-0000-4000-8000-000000000007" '{p_store_id:$store,p_device_id:$device,p_table_name:"categories",p_operation:"INSERT",p_record_uuid:$record,p_idempotency_key:$key,p_record_json:{id:$record,store_id:$store,name:"Protected JWT Push",created_by:"forbidden"}}')"
