@@ -624,6 +624,22 @@ Both runs completed successfully on commit `f8a93b05662fe20f85e6d3af4ea275312f28
 Scope note: the database/RPC/RLS role correction is verified in CI, but this repository branch contains no frontend or application UI source files, so seller/owner screen visibility and client-side role checks could not be inspected here. This is not staging or production acceptance and does not complete the overall Phase 3 security gate.
 
 
+## Stage 3 / Part A — Store-scoped warehouses
+
+| Test | File | Required result |
+|---|---|---|
+| Legacy PostgreSQL migration fixture | `tests/phase3-warehouse-legacy-fixture.sql` | Two stores with the old global location codes and inventory balances exist before migration |
+| Store-scoped warehouse migration | `docs/PHASE3_REPAIR_010_STORE_SCOPED_WAREHOUSES.sql` | Each existing store receives three independent UUID locations; old stock, movement and adjustment rows are mapped using the owning product/store; unmappable rows fail the transaction |
+| Warehouse isolation and lifecycle | `tests/phase3-warehouse-store-scope-regression.sql` | Same code is unique per store; cross-store location UUIDs are rejected; new stores receive defaults; owner-only create/deactivate RPCs work; default/non-empty warehouses cannot be deactivated; authenticated direct DML is denied |
+| Existing SQLite database upgrade | `docs/SQLITE_MIGRATION_PHASE3_WAREHOUSES.sql` | Existing local balances and movements are mapped to store-specific locations; triggers reject cross-store and inactive-warehouse writes; location events enter the local Change Log |
+| SQLite upgrade regression | `tests/sqlite-stage3-warehouse-migration-regression.py` | Data preservation, default location creation, Change Log events and foreign-key integrity pass |
+
+**CI evidence:** SQL migration run [46152160403](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46152160403) PASS and Supabase Auth run [46152160425](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46152160425) PASS on commit `15a96ab5531a1fe56707b9233bf96e4683f7620c`.
+
+**Acceptance boundary:** these tests verify PostgreSQL and SQLite schema/RPC behavior in disposable CI. They do not prove Flutter's local transaction/restart behavior or reconciliation of locally generated warehouse IDs with server-pulled location IDs; the repository has no Flutter client source.
+
+---
+
 ## D3.2 — Delete Event Contract, Tombstone and Reliable Pull/ACK
 
 This section adds the integrated acceptance suite for the D3.2 server synchronization contract. It complements, and does not replace, the existing Stage 3 regression coverage.
