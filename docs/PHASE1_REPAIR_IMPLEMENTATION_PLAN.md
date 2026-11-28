@@ -1208,13 +1208,14 @@ Aligned the SQLite source schema with the approved PostgreSQL history-retention 
 - Changed both Phase 3 purchase-return-item relationships (return parent and product) to `ON DELETE RESTRICT`.
 - Updated the SQLite FK summary to match the executable DDL.
 - Changed SQLite Tombstone uniqueness to the approved logical identity `(store_id, table_name, record_uuid)`.
+- Added six SQLite Change Log triggers for `purchase_returns` and `purchase_return_items` (INSERT/UPDATE/DELETE). Child ownership is resolved through its parent; the RESTRICT FK prevents parent removal while child rows remain.
 - Preserved store/user lifecycle CASCADE relationships; they are explicitly outside the business-history FK conversion.
 
 The SQLite Phase 1/3 schema has no purchase-receipt or purchase-closure detail tables, so those PostgreSQL relationships have no local equivalent in these SQLite files.
 
 #### B. Regression coverage
 
-Added `tests/sqlite-stage2-history-retention-regression.py` and a SQL Migration Smoke workflow step. It checks all 12 SQLite business-history FK declarations, exercises SQLite RESTRICT behavior for each relationship, verifies the explicitly retained lifecycle cascades, and tests store-scoped Tombstone identity.
+Added `tests/sqlite-stage2-history-retention-regression.py` and a SQL Migration Smoke workflow step. It checks all 12 SQLite business-history FK declarations, exercises SQLite RESTRICT behavior for each relationship, verifies the explicitly retained lifecycle cascades, and tests store-scoped Tombstone identity. It also executes the six actual purchase-return triggers in an isolated SQLite fixture, checks parent-derived store ownership and ordered INSERT/UPDATE/DELETE events, proves parent deletion is blocked while a child exists, and forces a Change Log failure to verify the child deletion rolls back.
 
 Extended `tests/phase3-security-catalog-regression.sql` so the direct-write denial matrix also includes categories, brands, products, customers and suppliers and asserts their restrictive DELETE-denial policies. Extended `tests/phase3-security-regression.sql` with an authenticated direct DELETE denial check against a visible accounting row.
 
