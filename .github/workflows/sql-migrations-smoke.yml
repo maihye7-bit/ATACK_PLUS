@@ -244,6 +244,16 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-device-credential-regression.sql"
+
+      # D3.2 / R3: a cursor can be acknowledged only through a server-issued page record.
+      - name: Apply D3.2 delivery-bound ACK
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE3_REPAIR_007_SYNC_DELIVERY_ACK.sql"
+      - name: Run D3.2 delivery and pagination regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-sync-delivery-ack-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
