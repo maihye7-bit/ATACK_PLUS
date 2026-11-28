@@ -943,3 +943,41 @@ The SQL migration and regression were added to `.github/workflows/sql-migrations
 - R1 does not add delivery proof to ACK; that remains R3.
 - Tombstone event identity, lifecycle, pagination and client reconciliation remain in R4–R7.
 - Staging acceptance and client-side local-transaction tests remain open.
+
+
+### 19.12 D3.2 / R2 — authenticated device credential binding
+
+**Status:** Implemented on `repair/verified-fixes`; disposable PostgreSQL CI validation is pending. No persistent database has been modified.
+
+#### A. Audited current state
+
+The existing `devices` row held only a UUID, store, device name/type and online metadata. Pull, ACK and generic Push accepted a caller-supplied `device_id` after checking only that the row existed in the requested store. There was no user assignment, credential, revocation state or controlled device registration/rotation RPC. The legacy `process_outbox_entry` function was already revoked from application roles and remains unavailable.
+
+The existing device RLS/write policy required `sync.manage`, which is an owner-controlled capability in the consolidated owner/seller role model. R2 preserves that boundary: the owner provisions devices for active store users; sellers cannot register or manage devices.
+
+#### B. Implementation
+
+Added `docs/PHASE3_REPAIR_006_DEVICE_CREDENTIAL_BINDING.sql`:
+- Adds a private `device_credentials` table binding device, store and assigned application user.
+- Stores only a SHA-256 digest of a 256-bit random bearer credential. The raw token is returned once by provisioning/rotation RPCs and is never stored in the table or audit log.
+- Adds owner-controlled `register_sync_device`, `rotate_sync_device_credential` and `revoke_sync_device` RPCs, requiring `sync.manage`.
+- Audits registration, credential rotation and revocation without recording the raw token.
+- Revokes direct authenticated INSERT/UPDATE/DELETE on `devices`; device management must use the audited lifecycle RPCs.
+- Adds a private credential assertion helper that binds the presented device ID and token to the authenticated application user and store, and locks the device/credential rows during validation.
+- Adds credential-bearing overloads for Pull, ACK, Outbox enqueue and Outbox apply.
+- Revokes the tokenless Pull/ACK/Push/apply signatures from authenticated clients while retaining the existing trusted service-role signatures.
+- Revoked devices cannot sync. Revoked devices are not reactivated by rotation; replacement uses a newly registered device ID, avoiding accidental reuse of an old device checkpoint.
+
+The existing `is_online` field remains presence metadata, not an authorization signal. The technical `cashier` role key is unchanged.
+
+#### C. Compatibility and acceptance boundary
+
+Authenticated clients must migrate to the credential-bearing RPC overloads and securely retain the device token. Existing device rows without a credential cannot authenticate through the new authenticated RPC signatures; they require owner-controlled re-registration. No Flutter client exists in this repository, so secure local token storage and client request wiring remain future client acceptance work. This compatibility impact must be considered before any staging rollout.
+
+#### D. Regression and CI
+
+Added `tests/phase3-device-credential-regression.sql` and CI steps after R1. The test covers owner provisioning, one-way hash storage, seller/device binding, wrong-token rejection, cross-user impersonation rejection, Pull/ACK/Push/apply using a valid token, tokenless RPC denial, token rotation, and revocation/idempotent revocation.
+
+**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+
+No local, staging or production database was touched; no merge to `main` was performed.
