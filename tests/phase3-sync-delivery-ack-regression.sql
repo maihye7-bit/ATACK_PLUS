@@ -231,9 +231,6 @@ DECLARE
   v_device TEXT := current_setting('atack_test.d32_r3_device_a');
   v_token TEXT := current_setting('atack_test.d32_r3_token_a');
   v_page JSONB;
-  v_cursor BIGINT;
-  v_max BIGINT;
-  v_base BIGINT := current_setting('atack_test.d32_r3_purchase_base')::BIGINT;
 BEGIN
   v_page := public.get_unsynced_records_page(v_store,v_device,'purchases',v_token);
   IF (v_page->>'event_count')::INTEGER <> 0
@@ -242,12 +239,28 @@ BEGIN
      OR jsonb_array_length(v_page->'events') <> 0 THEN
     RAISE EXCEPTION 'Hidden purchase activity leaked through Pull metadata: %',v_page;
   END IF;
+  RAISE NOTICE 'PASS: invisible-only pages expose no event count/has_more/delivery ID';
+END
+$hidden_event_checkpoint$;
+RESET ROLE;
 
+-- Verify server-side checkpoint as the migration/test owner; sellers cannot read
+-- sync_cursors directly because its RLS is intentionally administrative.
+DO $verify_hidden_checkpoint$
+DECLARE
+  v_device TEXT := current_setting('atack_test.d32_r3_device_a');
+  v_base BIGINT := current_setting('atack_test.d32_r3_purchase_base')::BIGINT;
+  v_cursor BIGINT;
+  v_max BIGINT;
+BEGIN
   SELECT last_pull_seq INTO v_cursor
     FROM public.sync_cursors
-   WHERE store_id=v_store AND device_id=v_device AND table_name='purchases';
+   WHERE store_id='10000000-0000-4000-8000-000000000001'
+     AND device_id=v_device AND table_name='purchases';
   SELECT COALESCE(MAX(sync_cursor),0) INTO v_max
-    FROM public.change_log WHERE store_id=v_store AND table_name='purchases';
+    FROM public.change_log
+   WHERE store_id='10000000-0000-4000-8000-000000000001'
+     AND table_name='purchases';
   IF v_max <= v_base THEN
     RAISE EXCEPTION 'Purchase Change Log fixtures were not created: base %, max %',v_base,v_max;
   END IF;
@@ -255,9 +268,8 @@ BEGIN
     RAISE EXCEPTION 'Invisible event checkpoint did not advance safely: cursor %, base %, max %',
       v_cursor,v_base,v_max;
   END IF;
-  RAISE NOTICE 'PASS: invisible-only pages expose no event count/has_more/delivery ID and checkpoint safely';
+  RAISE NOTICE 'PASS: invisible-only stream advances the server checkpoint without exposing hidden metadata';
 END
-$hidden_event_checkpoint$;
-RESET ROLE;
+$verify_hidden_checkpoint$;
 
 ROLLBACK;
