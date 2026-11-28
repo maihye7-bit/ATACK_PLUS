@@ -254,23 +254,27 @@ Actual Result: [تُملأ أثناء التنفيط]
 Status: ✅ PASS / ❌ FAIL
 ```
 
-### Test Case ADJ-03: Prevent negative stock adjustment
+### Test Case ADJ-03: Reject unauthorized negative stock adjustment
 
 ```
 Precondition:
-- Product stock = 3 units
+- Product available stock = 3 units
+- Caller does not hold inventory.allow_negative
 - Attempt to decrease by 5 units
 
 Steps:
-1. Call process_stock_adjustment with quantity=5
-2. Verify error raised
+1. Call process_stock_adjustment with adjustment_type="DECREASE", quantity=5
+2. Verify the operation is rejected and stock remains unchanged
 
 Expected Result:
-- Exception: "Cannot decrease stock below zero"
+- Negative stock is rejected because inventory.allow_negative is absent
+- No stock movement, adjustment row, or audit event is committed
 
-Actual Result: [تُملأ أثناء التنفيط]
-Status: ✅ PASS / ❌ FAIL
+Actual Result: [تُملأ أثناء التنفيذ]
+Status: Pending CI evidence
 ```
+
+Authorized negative adjustments are covered by **Stage 3 / Part B — D-016 negative-stock authorization** below; they require a non-empty reason, zero reserved quantity, and a valid registered-device credential.
 
 ### Test Case ADJ-04: Reason is required
 
