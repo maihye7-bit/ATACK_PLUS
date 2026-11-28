@@ -322,8 +322,5 @@ BEGIN
         'negative_stock_authorized',NEW.negative_stock_authorized,'created_at',NEW.created_at));
 END;
 
-DROP TABLE stage3_location_map;
-DROP TABLE stage3_old_locations;
-
 COMMIT;
 PRAGMA foreign_keys = ON;
