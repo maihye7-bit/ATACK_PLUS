@@ -27,7 +27,7 @@ CREATE TABLE stock(
 CREATE TABLE stock_movements(
   id TEXT PRIMARY KEY,product_id TEXT NOT NULL,location_id TEXT NOT NULL DEFAULT 'main',
   type TEXT NOT NULL,quantity NUMERIC NOT NULL,unit_id TEXT NOT NULL,
-  cost_per_unit NUMERIC NOT NULL,total_value NUMERIC NOT NULL,reference_id TEXT,reference_type TEXT,user_id TEXT NOT NULL,created_at TEXT DEFAULT (datetime('now')),
+  cost_per_unit NUMERIC NOT NULL,total_value NUMERIC NOT NULL,reference_id TEXT,reference_type TEXT,reason TEXT,user_id TEXT NOT NULL,created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY(product_id) REFERENCES products(id),
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
@@ -35,7 +35,7 @@ CREATE TABLE stock_adjustments(
   id TEXT PRIMARY KEY,store_id TEXT NOT NULL,product_id TEXT NOT NULL,
   adjustment_number TEXT NOT NULL,adjustment_type TEXT NOT NULL,reason TEXT NOT NULL,
   quantity NUMERIC NOT NULL,unit_id TEXT NOT NULL,cost_per_unit NUMERIC NOT NULL,
-  total_value NUMERIC NOT NULL,created_by TEXT NOT NULL,
+  total_value NUMERIC NOT NULL,created_by TEXT NOT NULL,created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY(store_id) REFERENCES stores(id),
   FOREIGN KEY(product_id) REFERENCES products(id),
   FOREIGN KEY(created_by) REFERENCES users(id)
@@ -63,6 +63,11 @@ VALUES ('{uuid(51)}','{uuid(1)}','{uuid(21)}','ST3-ADJ-1','INCREASE','legacy fix
 db.commit()
 
 db.executescript(MIGRATION)
+db.execute("PRAGMA foreign_keys=ON")
+# D-016 upgrade removes the legacy non-negative CHECK while requiring
+# operation/device/reason evidence before a local stock balance can go below zero.
+NEGATIVE_MIGRATION = (ROOT / "docs" / "SQLITE_MIGRATION_PHASE3_NEGATIVE_STOCK.sql").read_text(encoding="utf-8")
+db.executescript(NEGATIVE_MIGRATION)
 db.execute("PRAGMA foreign_keys=ON")
 
 # Legacy rows are remapped to independent per-store UUID locations without losing balances.
@@ -115,7 +120,65 @@ try:
 except sqlite3.IntegrityError:
     pass
 
+# Negative balances are rejected without an authorized movement.
+store_a_main = db.execute("SELECT id FROM locations WHERE store_id=? AND code='main'", (uuid(1),)).fetchone()[0]
+db.execute("UPDATE stock SET quantity=0,reserved_quantity=0 WHERE product_id=? AND store_id=?",
+           (uuid(21),uuid(1)))
+try:
+    db.execute("UPDATE stock SET quantity=-1 WHERE product_id=? AND store_id=?",
+               (uuid(21),uuid(1)))
+    raise AssertionError("Negative stock was accepted without an authorization movement")
+except sqlite3.IntegrityError:
+    pass
+
+operation = uuid(71)
+device = uuid(72)
+db.execute(
+    """INSERT INTO stock_movements
+       (id,product_id,store_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
+        reference_id,reference_type,reason,user_id,operation_id,device_id,shortage_quantity,negative_stock_authorized)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+    (uuid(73),uuid(21),uuid(1),store_a_main,"OUT",1,"pcs",10,10,None,None,
+     "approved offline negative sale",uuid(11),operation,device,1,1)
+)
+db.execute("UPDATE stock SET quantity=-1,last_operation_id=? WHERE product_id=? AND store_id=?",
+           (operation,uuid(21),uuid(1)))
+assert db.execute("SELECT quantity,last_operation_id FROM stock WHERE product_id=? AND store_id=?",
+                  (uuid(21),uuid(1))).fetchone() == (-1,operation)
+
+# Movement and adjustment evidence cannot claim authorization without a device.
+try:
+    db.execute(
+        """INSERT INTO stock_movements
+           (id,product_id,store_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
+            reason,user_id,operation_id,shortage_quantity,negative_stock_authorized)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (uuid(74),uuid(21),uuid(1),store_a_main,"OUT",1,"pcs",10,10,
+         "missing device",uuid(11),uuid(75),1,1)
+    )
+    raise AssertionError("Negative movement without device id was accepted")
+except sqlite3.IntegrityError:
+    pass
+
+db.execute(
+    """INSERT INTO stock_adjustments
+       (id,store_id,product_id,adjustment_number,adjustment_type,reason,quantity,unit_id,
+        cost_per_unit,total_value,created_by,location_id,operation_id,device_id,
+        shortage_quantity,negative_stock_authorized)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+    (uuid(76),uuid(1),uuid(21),"ST3-NEG-1","DECREASE","approved offline adjustment",1,
+     "pcs",10,10,uuid(11),store_a_main,uuid(77),device,1,1)
+)
+assert db.execute(
+    "SELECT COUNT(*) FROM change_log WHERE table_name='stock_movements' AND operation='INSERT' AND record_uuid=?",
+    (uuid(73),)
+).fetchone()[0] == 1
+assert db.execute(
+    "SELECT COUNT(*) FROM change_log WHERE table_name='stock_adjustments' AND operation='INSERT' AND record_uuid=?",
+    (uuid(76),)
+).fetchone()[0] == 1
+
 fk_errors = db.execute("PRAGMA foreign_key_check").fetchall()
 assert not fk_errors, fk_errors
-print("PASS: SQLite legacy warehouse remap, per-store defaults, Change Log, and cross-store/inactive write guards")
+print("PASS: SQLite warehouse remap and D-016 negative stock evidence/atomic guard regression")
 db.close()
