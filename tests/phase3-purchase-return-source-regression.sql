@@ -97,7 +97,7 @@ BEGIN
     v_failed:=TRUE;
     v_error:=SQLERRM;
   END;
-  IF NOT v_failed OR position('total accepted quantity' IN COALESCE(v_error,''))=0 THEN
+  IF NOT v_failed OR position('aggregate across all receipt paths' IN COALESCE(v_error,''))=0 THEN
     RAISE EXCEPTION 'Cross-path purchase over-return was not rejected by the purchase-line aggregate guard: %',v_error;
   END IF;
 
