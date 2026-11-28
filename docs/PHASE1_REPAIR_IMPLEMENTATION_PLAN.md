@@ -1106,3 +1106,34 @@ Added `tests/phase3-tombstone-device-progress-regression.sql` and CI steps after
 **CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
 
 No status fields were removed or rewritten, no persistent DB was touched, and no merge to `main` was performed.
+
+
+### 19.16 D3.2 / R6 — pagination boundaries, ordering and concurrent writes
+
+**Status:** Implemented/test coverage added on `repair/verified-fixes`; final disposable PostgreSQL CI validation is pending.
+
+#### A. Pagination contract
+
+R3 introduced fixed 500-visible-event pages, a server-managed per-device/table cursor, `has_more`, delivery IDs and sequential ACK. R6 preserves per-table Pull; it does not introduce a Global Stream. The client requests the next page only after the previous page has been applied locally and ACKed. Internal cursor numbers are not client-controlled or returned.
+
+The R3 page function serializes each device/table stream using a row lock on `sync_cursors`. Pull and ACK use the same lock order (device credential, sync cursor, delivery page) to avoid out-of-order advancement and lock inversion. A page is computed from one statement snapshot; writes committed after that snapshot remain beyond the acknowledged page boundary and are returned on a subsequent Pull.
+
+#### B. Visibility and ordering
+
+- `has_more` counts only events visible to the caller.
+- If no events are visible, the server advances the checkpoint across the invisible range internally and returns an empty response with no delivery ID or hidden-event metadata.
+- If the page contains up to 500 visible events, the server may checkpoint trailing invisible events after the last visible event because every visible event in that snapshot is included.
+- If a 501st visible event exists, the page boundary stops at the 500th visible event; the next page starts after its ACK.
+- Per-table streams remain independent. Tombstone is the canonical delete signal, so a client must reconcile it against stale UPDATEs arriving from another table stream rather than depending on cross-table cursor order.
+
+#### C. Regression and CI
+
+Added:
+- `tests/phase3-sync-pagination-boundary-regression.sql` for exact 499, 500 and 501 visible-event boundaries.
+- `tests/phase3-sync-page-concurrency.sh` for two independent database sessions: one issues and holds page 1, another commits a later Change Log event, the first ACKs, and the next Pull must return the concurrent event without a gap.
+
+The existing R3 1,201-event regression continues to cover 500/500/201 pagination, replay, idempotent ACK and no duplicates.
+
+**CI evidence:** pending the workflow run containing the R5/R6 tests. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+
+No Global Stream migration, client implementation, persistent DB execution or `main` merge is included.
