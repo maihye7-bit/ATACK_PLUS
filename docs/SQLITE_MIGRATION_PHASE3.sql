@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS purchase_returns (
     notes TEXT,
     created_by TEXT NOT NULL CHECK(length(created_by) = 36),
     device_sync_id TEXT,
+    operation_id TEXT,
+    device_id TEXT,
+    shortage_quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(shortage_quantity >= 0),
+    negative_stock_authorized INTEGER NOT NULL DEFAULT 0 CHECK(negative_stock_authorized IN (0,1)),
     is_synced INTEGER DEFAULT 0 CHECK(is_synced IN (0, 1)),
     sync_status TEXT DEFAULT 'PENDING' CHECK(sync_status IN ('SYNCED', 'PENDING', 'ERROR', 'CONFLICT')),
     synced_at TEXT,
@@ -33,6 +37,11 @@ CREATE TABLE IF NOT EXISTS purchase_returns (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (store_id) REFERENCES stores(id),
     FOREIGN KEY (original_purchase_id) REFERENCES purchases(id),
+    CHECK(
+      (negative_stock_authorized=0 AND shortage_quantity=0)
+      OR (negative_stock_authorized=1 AND shortage_quantity>0
+          AND operation_id IS NOT NULL AND device_id IS NOT NULL AND length(trim(reason))>0)
+    ),
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
