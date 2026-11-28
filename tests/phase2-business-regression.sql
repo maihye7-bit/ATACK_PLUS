@@ -601,18 +601,8 @@ BEGIN
  SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  IF v_qty IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'Denied negative adjustment changed stock: %',v_qty; END IF;
 
- -- Only the owner has inventory.adjust and inventory.allow_negative; the exception is audited.
- PERFORM set_config('request.jwt.claim.sub',v_owner_auth::text,TRUE);
- v_result:=public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000027',
-  jsonb_build_object('id','76000000-0000-4000-8000-000000000011',
-   'adjustment_number','ADJ-PH2-004','product_id',v_product,'adjustment_type','DECREASE',
-   'reason','Approved negative stock test','quantity',6,'unit_id','pcs'));
- SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
- IF v_qty IS DISTINCT FROM -2 OR NOT EXISTS(SELECT 1 FROM public.audit_logs
-    WHERE entity_id='76000000-0000-4000-8000-000000000011' AND action='UPDATE'
-      AND new_values_json->>'event'='NEGATIVE_STOCK') THEN
-  RAISE EXCEPTION 'Authorized negative stock or audit mismatch: %',v_qty;
- END IF;
- RAISE NOTICE 'PASS: inventory.adjust permission, negative-stock special permission, weighted adjustment cost and balanced journal entries';
+ -- D-016 negative-stock device/evidence acceptance runs after R2 in the
+ -- dedicated phase3-negative-stock-policy-regression.sql suite.
+ RAISE NOTICE 'PASS: inventory adjustment permissions, weighted adjustment cost and balanced journal entries';
 END
 $stock_adjustment_regression$;
