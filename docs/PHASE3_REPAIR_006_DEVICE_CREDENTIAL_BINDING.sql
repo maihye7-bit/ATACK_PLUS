@@ -149,8 +149,7 @@ BEGIN
         RAISE EXCEPTION 'Unsupported device type';
     END IF;
 
-    -- Two independently generated UUIDs provide a 64-hex-character (256-bit)
-    -- high-entropy bearer credential.
+    -- Two independently generated UUIDs provide a 64-hex-character bearer credential with 244 bits of UUID-v4 entropy.
     v_token := replace(gen_random_uuid()::TEXT, '-', '')
             || replace(gen_random_uuid()::TEXT, '-', '');
     v_hash := encode(public.atack_digest(convert_to(v_token, 'UTF8'), 'sha256'), 'hex');
