@@ -1103,7 +1103,11 @@ Authoritative progress remains per device and table in `sync_cursors`, with page
 
 Added `tests/phase3-tombstone-device-progress-regression.sql` and CI steps after R4. It creates two devices for one seller, issues one Tombstone, ACKs it from device A, verifies device B remains behind and the global Tombstone fields remain PENDING/NULL, then ACKs from device B and verifies both independent checkpoints and page ACK records while the legacy fields remain unchanged.
 
-**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+**CI evidence**
+- SQL migration smoke test: [run 46132930356](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46132930356) — completed / success on commit `b6bd76d1c3e2345eb98c415cbe33d11896abfcce`.
+- Job `140941891400`: R1–R5 migrations and regression steps all completed / success.
+- R5 regression confirms device A advances independently while device B remains behind; after device B ACKs, both per-device checkpoints and delivery records are complete while the legacy Tombstone fields remain PENDING/NULL.
+- This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No status fields were removed or rewritten, no persistent DB was touched, and no merge to `main` was performed.
 
