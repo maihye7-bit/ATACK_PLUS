@@ -353,9 +353,10 @@ BEGIN
     UPDATE public.locations SET is_active=FALSE,updated_at=NOW()
      WHERE id=p_location_id AND store_id=p_store_id AND is_active;
     IF NOT FOUND THEN RAISE EXCEPTION 'Warehouse not found or already inactive'; END IF;
-    INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,old_values_json)
-    VALUES(p_store_id,v_user,'LOCATION',p_location_id::UUID,'DEACTIVATE',
-           jsonb_build_object('location_id',p_location_id));
+    INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,old_values_json,new_values_json)
+    VALUES(p_store_id,v_user,'LOCATION',p_location_id::UUID,'UPDATE',
+           jsonb_build_object('location_id',p_location_id,'is_active',TRUE),
+           jsonb_build_object('location_id',p_location_id,'is_active',FALSE));
 END;
 $deactivate_location$;
 
