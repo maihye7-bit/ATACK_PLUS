@@ -216,6 +216,7 @@ CREATE INDEX idx_products_category ON products(category_id);
 CREATE INDEX idx_products_brand ON products(brand_id);
 CREATE INDEX idx_products_active ON products(is_active);
 CREATE UNIQUE INDEX uq_products_store_barcode ON products(store_id, barcode) WHERE barcode IS NOT NULL;
+CREATE UNIQUE INDEX uq_products_id_store ON products(id,store_id);
 ```
 
 ---
@@ -249,21 +250,52 @@ CREATE INDEX idx_product_units_unit ON product_units(unit_id);
 
 ```sql
 CREATE TABLE locations (
-    id TEXT PRIMARY KEY CHECK(id IN ('main', 'warehouse', 'storage')),
+    id TEXT PRIMARY KEY CHECK(length(id) = 36),
+    store_id TEXT NOT NULL CHECK(length(store_id) = 36),
+    code TEXT NOT NULL CHECK(length(code) BETWEEN 2 AND 40),
     name TEXT NOT NULL,
-    is_default INTEGER DEFAULT 0 CHECK(is_default IN (0, 1))
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE,
+    UNIQUE(store_id,code),
+    UNIQUE(id,store_id)
 );
+
+CREATE UNIQUE INDEX uq_locations_one_active_default
+    ON locations(store_id) WHERE is_default=1 AND is_active=1;
+
+CREATE TRIGGER trg_stores_create_default_locations
+AFTER INSERT ON stores
+BEGIN
+    INSERT OR IGNORE INTO locations(id,store_id,code,name,is_default,is_active) VALUES
+      (lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6))),NEW.id,'main','المتجر الرئيسي',1,1),
+      (lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6))),NEW.id,'warehouse','المستودع',0,1),
+      (lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6))),NEW.id,'storage','مخزن إضافي',0,1);
+END;
+
+INSERT OR IGNORE INTO locations(id,store_id,code,name,is_default,is_active)
+SELECT lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6))),
+       s.id,'main','المتجر الرئيسي',1,1 FROM stores s;
+INSERT OR IGNORE INTO locations(id,store_id,code,name,is_default,is_active)
+SELECT lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6))),
+       s.id,'warehouse','المستودع',0,1 FROM stores s;
+INSERT OR IGNORE INTO locations(id,store_id,code,name,is_default,is_active)
+SELECT lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6))),
+       s.id,'storage','مخزن إضافي',0,1 FROM stores s;
 
 CREATE TABLE stock (
     id TEXT PRIMARY KEY CHECK(length(id) = 36),
     product_id TEXT NOT NULL CHECK(length(product_id) = 36),
-    location_id TEXT NOT NULL DEFAULT 'main',
+    store_id TEXT NOT NULL CHECK(length(store_id) = 36),
+    location_id TEXT NOT NULL,
     quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(quantity >= 0),
     reserved_quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(reserved_quantity >= 0 AND reserved_quantity <= quantity),
     available_quantity NUMERIC(18,4) GENERATED ALWAYS AS (quantity - reserved_quantity) STORED,
     last_updated TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
-    FOREIGN KEY (location_id) REFERENCES locations(id),
+    FOREIGN KEY (product_id,store_id) REFERENCES products(id,store_id) ON DELETE RESTRICT,
+    FOREIGN KEY (location_id,store_id) REFERENCES locations(id,store_id) ON DELETE RESTRICT,
     CONSTRAINT unique_product_location UNIQUE (product_id, location_id)
 );
 
@@ -273,7 +305,8 @@ CREATE INDEX idx_stock_location ON stock(location_id);
 CREATE TABLE stock_movements (
     id TEXT PRIMARY KEY CHECK(length(id) = 36),
     product_id TEXT NOT NULL CHECK(length(product_id) = 36),
-    location_id TEXT NOT NULL DEFAULT 'main',
+    store_id TEXT NOT NULL CHECK(length(store_id) = 36),
+    location_id TEXT NOT NULL,
     type TEXT NOT NULL CHECK(type IN ('IN', 'OUT', 'ADJUSTMENT', 'RETURN_IN', 'RETURN_OUT')),
     quantity NUMERIC(18,4) NOT NULL CHECK(quantity > 0),
     unit_id TEXT NOT NULL CHECK(unit_id IN ('pcs', 'g', 'kg', 'liter', 'box', 'carton')),
@@ -288,7 +321,8 @@ CREATE TABLE stock_movements (
     sync_status TEXT DEFAULT 'PENDING' CHECK(sync_status IN ('SYNCED', 'PENDING', 'ERROR', 'CONFLICT')),
     synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (product_id,store_id) REFERENCES products(id,store_id) ON DELETE RESTRICT,
+    FOREIGN KEY (location_id,store_id) REFERENCES locations(id,store_id) ON DELETE RESTRICT,
     FOREIGN KEY (unit_id) REFERENCES units(id),
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
@@ -1695,12 +1729,7 @@ INSERT INTO units (id, name, symbol, is_active) VALUES
 ('carton','كرتونة','كرتونة',1)
 ON CONFLICT (id) DO NOTHING;
 
--- Locations (المواقع)
-INSERT INTO locations (id, name, is_default) VALUES
-('main',      'المتجر الرئيسي',     1),
-('warehouse', 'المستودع',          0),
-('storage',   'مخزن إضافي',        0)
-ON CONFLICT (id) DO NOTHING;
+-- Store-scoped default locations are created by trg_stores_create_default_locations.
 
 -- Roles (الأدوار)
 INSERT INTO roles (id, name, description, is_active) VALUES
