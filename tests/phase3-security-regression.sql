@@ -99,6 +99,15 @@ BEGIN
   END;
   IF NOT v_denied THEN RAISE EXCEPTION 'Direct chart_of_accounts INSERT was not denied'; END IF;
 
+  -- A row visible to this owner is still not physically deletable through REST.
+  v_denied:=FALSE;
+  BEGIN
+    DELETE FROM public.chart_of_accounts WHERE account_code='SEC-A';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_denied:=TRUE;
+  END;
+  IF NOT v_denied THEN RAISE EXCEPTION 'Direct chart_of_accounts DELETE was not denied'; END IF;
+
   v_denied:=FALSE;
   BEGIN
     PERFORM public.process_stock_adjustment(
