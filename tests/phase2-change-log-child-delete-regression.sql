@@ -12,8 +12,8 @@ INSERT INTO public.customers(id,store_id,code,name) VALUES
  ('34000000-0000-4000-8000-000000000001','31000000-0000-4000-8000-000000000001','D31-CUST','D3.1 Customer');
 INSERT INTO public.suppliers(id,store_id,code,name,current_debt) VALUES
  ('35000000-0000-4000-8000-000000000001','31000000-0000-4000-8000-000000000001','D31-SUP','D3.1 Supplier',100);
-INSERT INTO public.invoices(id,store_id,invoice_number,type,invoice_date,total_amount,remaining_amount,created_by) VALUES
- ('36000000-0000-4000-8000-000000000001','31000000-0000-4000-8000-000000000001','D31-INV','SALE',NOW(),10,10,'32000000-0000-4000-8000-000000000001');
+INSERT INTO public.invoices(id,store_id,invoice_number,type,customer_id,invoice_date,total_amount,remaining_amount,created_by) VALUES
+ ('36000000-0000-4000-8000-000000000001','31000000-0000-4000-8000-000000000001','D31-INV','SALE','34000000-0000-4000-8000-000000000001',NOW(),10,10,'32000000-0000-4000-8000-000000000001');
 INSERT INTO public.purchases(id,store_id,purchase_number,supplier_id,purchase_date,created_by) VALUES
  ('37000000-0000-4000-8000-000000000001','31000000-0000-4000-8000-000000000001','D31-PUR','35000000-0000-4000-8000-000000000001',NOW(),'32000000-0000-4000-8000-000000000001');
 INSERT INTO public.customer_payments(id,customer_id,amount,payment_method,created_by) VALUES
@@ -82,21 +82,53 @@ BEGIN
 END;
 $child_events$;
 
-INSERT INTO public.stores(id,name) VALUES
- ('51000000-0000-4000-8000-000000000001','D3.1 Cascade Store');
+-- Direct deletion of a store-owned child must create its own event.
 INSERT INTO public.categories(id,store_id,name) VALUES
- ('52000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000001','D3.1 Cascade Category');
-DELETE FROM public.stores WHERE id='51000000-0000-4000-8000-000000000001';
-DO $cascade_event$
+ ('54000000-0000-4000-8000-000000000001',
+  '31000000-0000-4000-8000-000000000001','D3.1 Direct Category Delete');
+DELETE FROM public.categories WHERE id='54000000-0000-4000-8000-000000000001';
+DO $direct_category_event$
 BEGIN
  IF NOT EXISTS (SELECT 1 FROM public.change_log
-  WHERE store_id='51000000-0000-4000-8000-000000000001'
-   AND table_name='categories' AND record_uuid='52000000-0000-4000-8000-000000000001'
+  WHERE store_id='31000000-0000-4000-8000-000000000001'
+   AND table_name='categories'
+   AND record_uuid='54000000-0000-4000-8000-000000000001'
    AND operation='DELETE') THEN
-  RAISE EXCEPTION 'Store-owned category cascade missed its Change Log DELETE event';
+  RAISE EXCEPTION 'Direct category DELETE missed its Change Log event';
  END IF;
 END;
-$cascade_event$;
+$direct_category_event$;
+
+-- Store CASCADE currently cannot safely allocate a cursor after the
+-- store_sync_counters row is cascaded. It must fail closed and roll back.
+INSERT INTO public.stores(id,name) VALUES
+ ('51000000-0000-4000-8000-000000000001','D3.1 Cascade Guard Store');
+INSERT INTO public.categories(id,store_id,name) VALUES
+ ('52000000-0000-4000-8000-000000000001',
+  '51000000-0000-4000-8000-000000000001','D3.1 Cascade Guard Category');
+DO $cascade_fail_closed$
+DECLARE failed boolean := FALSE;
+BEGIN
+ BEGIN
+  DELETE FROM public.stores WHERE id='51000000-0000-4000-8000-000000000001';
+ EXCEPTION WHEN OTHERS THEN failed := TRUE;
+ END;
+ IF NOT failed THEN
+  RAISE EXCEPTION 'Store cascade unexpectedly committed without stable cursor ownership';
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM public.stores WHERE id='51000000-0000-4000-8000-000000000001')
+ OR NOT EXISTS (SELECT 1 FROM public.categories WHERE id='52000000-0000-4000-8000-000000000001') THEN
+  RAISE EXCEPTION 'Failed store cascade did not roll back parent and child rows';
+ END IF;
+ IF EXISTS (SELECT 1 FROM public.change_log
+  WHERE store_id='51000000-0000-4000-8000-000000000001'
+   AND table_name='categories'
+   AND record_uuid='52000000-0000-4000-8000-000000000001'
+   AND operation='DELETE') THEN
+  RAISE EXCEPTION 'Failed store cascade left a partial child DELETE event';
+ END IF;
+END;
+$cascade_fail_closed$;
 
 CREATE FUNCTION pg_temp.d31_reject_category_delete_log()
 RETURNS trigger LANGUAGE plpgsql AS $fn$
