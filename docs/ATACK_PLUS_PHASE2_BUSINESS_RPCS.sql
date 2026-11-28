@@ -165,6 +165,8 @@ DECLARE
     v_tax_rate NUMERIC(5,2); v_tax_line NUMERIC(18,4); v_line_total NUMERIC(18,4);
     v_factor NUMERIC(18,6); v_base_qty NUMERIC(18,4); v_cost NUMERIC(18,4);
     v_stock_id UUID; v_payment_id UUID; v_method TEXT;
+    v_available NUMERIC(18,4); v_shortage NUMERIC(18,4);
+    v_reason TEXT; v_device_id UUID; v_device_token TEXT;
 BEGIN
     IF COALESCE(jsonb_typeof(p_payload->'items'),'') <> 'array' THEN
         RAISE EXCEPTION 'Sale items must be a JSON array';
@@ -174,7 +176,7 @@ BEGIN
     END IF;
     SELECT c.app_user_id, c.already_processed INTO v_user, v_replay
       FROM public._claim_business_operation(p_store_id, p_operation_id, 'sale_invoice', v_invoice_id,
-                                            p_payload, 'sales.write') c;
+                                            p_payload - 'device_token', 'sales.write') c;
     IF v_replay THEN RETURN jsonb_build_object('success', TRUE, 'replayed', TRUE, 'invoice_id', v_invoice_id); END IF;
     v_location := public.resolve_store_location_id(p_store_id,v_location);
     IF v_invoice_no IS NULL THEN RAISE EXCEPTION 'invoice_number is required'; END IF;
@@ -244,15 +246,56 @@ BEGIN
         INSERT INTO public.stock(product_id,location_id,quantity,reserved_quantity)
         VALUES(v_product,v_location,0,0) ON CONFLICT(product_id,location_id) DO NOTHING;
         SELECT s.id INTO v_stock_id FROM public.stock s WHERE s.product_id=v_product AND s.location_id=v_location FOR UPDATE;
-        IF (SELECT quantity-reserved_quantity FROM public.stock WHERE id=v_stock_id) < v_base_qty THEN
-            RAISE EXCEPTION 'Insufficient available stock for product %', v_product USING ERRCODE='23514';
+        SELECT quantity-reserved_quantity INTO v_available
+          FROM public.stock WHERE id=v_stock_id FOR UPDATE;
+        v_shortage := GREATEST(v_base_qty-v_available,0);
+
+        IF v_shortage>0 THEN
+            IF NOT public.has_store_permission(p_store_id,'inventory.allow_negative') THEN
+                RAISE EXCEPTION 'Insufficient available stock; inventory.allow_negative is required'
+                    USING ERRCODE='42501';
+            END IF;
+            v_reason := NULLIF(BTRIM(p_payload->>'reason'),'');
+            IF v_reason IS NULL THEN
+                RAISE EXCEPTION 'A reason is required for negative-stock authorization'
+                    USING ERRCODE='23514';
+            END IF;
+            IF NULLIF(BTRIM(p_payload->>'device_id'),'') IS NULL
+               OR NULLIF(p_payload->>'device_token','') IS NULL THEN
+                RAISE EXCEPTION 'A registered device credential is required for negative stock'
+                    USING ERRCODE='42501';
+            END IF;
+            v_device_id := (p_payload->>'device_id')::UUID;
+            v_device_token := p_payload->>'device_token';
+            PERFORM public.assert_sync_device_credential(
+                p_store_id,v_device_id::TEXT,v_device_token
+            );
         END IF;
+
         UPDATE public.stock SET quantity=quantity-v_base_qty WHERE id=v_stock_id;
         INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
-            reference_id,reference_type,batch_number,expiry_date,reason,user_id)
+            reference_id,reference_type,batch_number,expiry_date,reason,user_id,
+            operation_id,device_id,shortage_quantity,negative_stock_authorized)
         VALUES(v_product,v_location,'OUT',v_base_qty,v_method,v_cost,v_base_qty*v_cost,
             v_invoice_id,'invoice',v_item->>'batch_number',NULLIF(v_item->>'expiry_date','')::TIMESTAMPTZ,
-            'Sale invoice '||v_invoice_no,v_user);
+            CASE WHEN v_shortage>0 THEN 'Negative stock sale: '||v_reason
+                 ELSE 'Sale invoice '||v_invoice_no END,
+            v_user,p_operation_id,CASE WHEN v_shortage>0 THEN v_device_id ELSE NULL END,
+            v_shortage,(v_shortage>0));
+
+        IF v_shortage>0 THEN
+            INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,new_values_json)
+            VALUES(p_store_id,v_user,'STOCK',v_stock_id,'UPDATE',
+                jsonb_build_object(
+                    'event','NEGATIVE_STOCK_SALE','invoice_id',v_invoice_id,
+                    'product_id',v_product,'location_id',v_location,
+                    'available_before_sale',v_available,
+                    'sold_quantity',v_base_qty,'shortage_quantity',v_shortage,
+                    'new_quantity',v_available-v_base_qty,'reason',v_reason,
+                    'permission','inventory.allow_negative','operation_id',p_operation_id,
+                    'device_id',v_device_id
+                ));
+        END IF;
     END LOOP;
 
     IF v_customer_id IS NOT NULL THEN
