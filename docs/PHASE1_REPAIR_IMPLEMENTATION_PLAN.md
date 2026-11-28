@@ -898,3 +898,43 @@ Added `tests/phase2-change-log-child-delete-regression.sql` and a CI step after 
 #### C. Boundaries
 
 CI exposed that deleting a store can cascade-delete its store_sync_counters row before a cascaded category trigger allocates its DELETE cursor. D3.1 therefore verifies that this operation fails closed and rolls back parent and child, rather than claiming the cascade is sync-safe. An explicit store lifecycle/deletion policy and durable cursor strategy are deferred to the appropriate later D3 design; no store cascade policy or FK was changed here. Pull/ACK semantics, pagination, client reconciliation, and generic Outbox behavior remain unchanged. CI results will be appended after the workflow run. No persistent local/staging/production database execution and no merge to `main` are included.
+
+
+### 19.11 D3.2 / R1 — Pull owner/seller read isolation
+
+**Status:** Implemented on `repair/verified-fixes`; disposable PostgreSQL CI validation is pending. No persistent database has been modified.
+
+#### A. Finding and implementation
+
+The existing `get_unsynced_records()` function is `SECURITY DEFINER` and queried `change_log` using only store, table and cursor predicates. Direct-table RLS policies therefore did not enforce the owner/seller visibility contract for Pull.
+
+Added `docs/PHASE3_REPAIR_005_SYNC_PULL_RBAC.sql`:
+- Adds a private, fixed-search-path `can_read_sync_change()` visibility resolver, with direct execution revoked from application roles.
+- Applies the existing permission catalog to every Pull allowlisted table.
+- Preserves store-wide shared product/customer/inventory visibility according to the user's permissions.
+- Restricts invoices to their seller; invoice items inherit invoice ownership.
+- Restricts sales returns and return items through the original invoice.
+- Restricts customer payments and customer ledgers by their authenticated creator.
+- Restricts payment allocations to the same seller's payment and invoice, and verifies the customer relationship.
+- Validates store ownership for child records through their authoritative parent, including product units, stock, purchase children, receipt children, closure children, supplier payments and supplier ledger rows.
+- Filters tombstones by the permission required to read the target entity, rather than requiring the seller to hold the administrative `sync.manage` permission.
+- Retains the trusted service-role path and the existing per-table Pull response shape/page limit. The duplicate `tombstones` entry in the allowlist is removed.
+
+The implementation preserves the technical `cashier` role key and does not rename roles or change business permissions.
+
+#### B. Regression and CI
+
+Added `tests/phase3-sync-pull-rbac-regression.sql` with two sellers and one owner in the same store. It checks seller-specific invoice headers, invoice items, returns, return items, customer payments, customer ledgers and payment allocations; shared product visibility; denial of purchase and supplier-payment events; target-scoped product/supplier tombstones; and owner-wide visibility.
+
+The SQL migration and regression were added to `.github/workflows/sql-migrations-smoke.yml` after owner/seller role consolidation. The workflow uses only its disposable PostgreSQL 16 service.
+
+**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+
+#### C. Boundaries and remaining D3.2 work
+
+- No local, staging or production database was touched.
+- No merge to `main` was performed.
+- R1 does not authenticate the physical device; that remains R2.
+- R1 does not add delivery proof to ACK; that remains R3.
+- Tombstone event identity, lifecycle, pagination and client reconciliation remain in R4–R7.
+- Staging acceptance and client-side local-transaction tests remain open.
