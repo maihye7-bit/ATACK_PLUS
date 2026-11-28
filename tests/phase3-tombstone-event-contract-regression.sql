@@ -272,10 +272,10 @@ BEGIN
     INSERT INTO public.tombstones(
       store_id,table_name,record_uuid,deleted_by
     ) VALUES (
-      '20000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000001',
       'categories',
       '99200000-0000-4000-8000-000000000041',
-      '99100000-0000-4000-8000-000000000043'
+      '99100000-0000-4000-8000-000000000041'
     );
   EXCEPTION WHEN unique_violation THEN
     denied := TRUE;
