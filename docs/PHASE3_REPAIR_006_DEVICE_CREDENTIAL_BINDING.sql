@@ -53,11 +53,18 @@ BEGIN
     END IF;
 
     IF p_store_id IS NULL
-       OR p_device_id IS NULL
+       OR NULLIF(btrim(p_device_id), '') IS NULL
        OR p_device_token IS NULL
-       OR p_device_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
+       OR p_device_token !~ '^[0-9a-f]{64}$'
+       OR p_store_id IS DISTINCT FROM public.current_user_store_id() THEN
         RAISE EXCEPTION 'Device authentication failed';
     END IF;
+
+    BEGIN
+        v_device_uuid := p_device_id::UUID;
+    EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION 'Device authentication failed';
+    END;
 
     SELECT u.id INTO v_user_id
       FROM public.users u
@@ -70,7 +77,6 @@ BEGIN
         RAISE EXCEPTION 'Device authentication failed';
     END IF;
 
-    v_device_uuid := p_device_id::UUID;
     v_token_hash := encode(
         public.atack_digest(convert_to(p_device_token, 'UTF8'), 'sha256'),
         'hex'
