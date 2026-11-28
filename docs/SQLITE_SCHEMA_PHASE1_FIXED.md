@@ -1778,22 +1778,22 @@ WHERE code IN ('products.read', 'inventory.read', 'sales.read', 'sales.write', '
 | `invoices` | `supplier_id` | `suppliers(id)` | `NO ACTION` |
 | `invoices` | `customer_id` | `customers(id)` | `NO ACTION` |
 | `invoices` | `store_id` | `stores(id)` | `NO ACTION` |
-| `payment_allocations` | `invoice_id` | `invoices(id)` | `CASCADE` |
-| `payment_allocations` | `payment_id` | `customer_payments(id)` | `CASCADE` |
+| `payment_allocations` | `invoice_id` | `invoices(id)` | `RESTRICT` |
+| `payment_allocations` | `payment_id` | `customer_payments(id)` | `RESTRICT` |
 | `product_units` | `unit_id` | `units(id)` | `NO ACTION` |
-| `product_units` | `product_id` | `products(id)` | `CASCADE` |
+| `product_units` | `product_id` | `products(id)` | `RESTRICT` |
 | `products` | `primary_unit_id` | `units(id)` | `NO ACTION` |
 | `products` | `brand_id` | `brands(id)` | `NO ACTION` |
 | `products` | `category_id` | `categories(id)` | `NO ACTION` |
 | `products` | `store_id` | `stores(id)` | `CASCADE` |
 | `purchase_items` | `quantity_unit_id` | `units(id)` | `RESTRICT` |
-| `purchase_items` | `product_id` | `products(id)` | `CASCADE` |
-| `purchase_items` | `purchase_id` | `purchases(id)` | `CASCADE` |
+| `purchase_items` | `product_id` | `products(id)` | `RESTRICT` |
+| `purchase_items` | `purchase_id` | `purchases(id)` | `RESTRICT` |
 | `purchases` | `created_by` | `users(id)` | `NO ACTION` |
 | `purchases` | `supplier_id` | `suppliers(id)` | `NO ACTION` |
 | `purchases` | `store_id` | `stores(id)` | `NO ACTION` |
 | `return_items` | `product_id` | `products(id)` | `NO ACTION` |
-| `return_items` | `return_id` | `sales_returns(id)` | `CASCADE` |
+| `return_items` | `return_id` | `sales_returns(id)` | `RESTRICT` |
 | `revenues` | `created_by` | `users(id)` | `NO ACTION` |
 | `revenues` | `store_id` | `stores(id)` | `NO ACTION` |
 | `role_permissions` | `permission_id` | `permissions(id)` | `NO ACTION` |
@@ -1802,14 +1802,14 @@ WHERE code IN ('products.read', 'inventory.read', 'sales.read', 'sales.write', '
 | `sales_returns` | `original_invoice_id` | `invoices(id)` | `NO ACTION` |
 | `sales_returns` | `store_id` | `stores(id)` | `NO ACTION` |
 | `stock` | `location_id` | `locations(id)` | `NO ACTION` |
-| `stock` | `product_id` | `products(id)` | `CASCADE` |
+| `stock` | `product_id` | `products(id)` | `RESTRICT` |
 | `stock_movements` | `user_id` | `users(id)` | `NO ACTION` |
 | `stock_movements` | `unit_id` | `units(id)` | `NO ACTION` |
 | `stock_movements` | `product_id` | `products(id)` | `NO ACTION` |
 | `supplier_ledger` | `created_by` | `users(id)` | `NO ACTION` |
-| `supplier_ledger` | `supplier_id` | `suppliers(id)` | `CASCADE` |
+| `supplier_ledger` | `supplier_id` | `suppliers(id)` | `RESTRICT` |
 | `supplier_payments` | `created_by` | `users(id)` | `NO ACTION` |
-| `supplier_payments` | `supplier_id` | `suppliers(id)` | `CASCADE` |
+| `supplier_payments` | `supplier_id` | `suppliers(id)` | `RESTRICT` |
 | `suppliers` | `store_id` | `stores(id)` | `CASCADE` |
 | `sync_conflicts` | `resolved_by` | `users(id)` | `NO ACTION` |
 | `sync_conflicts` | `store_id` | `stores(id)` | `NO ACTION` |
