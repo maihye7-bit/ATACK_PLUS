@@ -1072,3 +1072,37 @@ Added `tests/phase3-tombstone-event-contract-regression.sql` and CI steps after 
 - This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No physical purge, restore, local/staging/production SQL or merge to `main` is included.
+
+
+### 19.15 D3.2 / R5 — Tombstone status is not global device progress
+
+**Status:** Implemented on `repair/verified-fixes`; disposable PostgreSQL CI validation is pending. No persistent database has been modified.
+
+#### A. Repository-wide reference audit
+
+Reviewed the base schema, sync Pull/Push hardening, RBAC, user/device security, business RPCs, conflict design, sync design, and relevant sync/soft-delete regression tests for `tombstones.sync_status` and `tombstones.synced_at`.
+
+Findings:
+- The base Tombstone schema defines `sync_status DEFAULT 'PENDING'` and nullable `synced_at`.
+- `soft_delete_record` relies on the default pending state when creating a Tombstone.
+- Existing regression coverage asserts a new Tombstone is PENDING.
+- No authenticated Pull/ACK implementation updates these Tombstone fields. The `synced_at` updates found in sync Push apply to `sync_outbox`, not Tombstones.
+- The only active meaning that can safely be retained is legacy compatibility metadata; it is not proof that all devices received a delete.
+
+#### B. Implementation
+
+Added `docs/PHASE3_REPAIR_009_TOMBSTONE_SYNC_STATE_SEMANTICS.sql`. It intentionally makes no destructive schema change:
+- Documents `tombstones.sync_status` as legacy/non-authoritative and prohibits interpreting a single-device ACK as global SYNCED state.
+- Documents `tombstones.synced_at` as legacy and not maintained by the delivery-bound ACK contract.
+- Documents `sync_delivery_pages.acknowledged_at` as per-page/per-device delivery progress, not proof of local client commit.
+- Retains both Tombstone columns and their existing defaults/constraints for compatibility.
+
+Authoritative progress remains per device and table in `sync_cursors`, with page-level ACK evidence in `sync_delivery_pages`.
+
+#### C. Regression and CI
+
+Added `tests/phase3-tombstone-device-progress-regression.sql` and CI steps after R4. It creates two devices for one seller, issues one Tombstone, ACKs it from device A, verifies device B remains behind and the global Tombstone fields remain PENDING/NULL, then ACKs from device B and verifies both independent checkpoints and page ACK records while the legacy fields remain unchanged.
+
+**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+
+No status fields were removed or rewritten, no persistent DB was touched, and no merge to `main` was performed.
