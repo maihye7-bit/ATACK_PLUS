@@ -84,6 +84,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE3_REPAIR_010_STORE_SCOPED_WAREHOUSES.sql"
+      - name: Apply Stage 3 negative-stock audit migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE3_REPAIR_011_NEGATIVE_STOCK_AUDIT.sql"
       - name: Run Stage 3 store-scoped warehouse regression
         env:
           PGPASSWORD: postgres
