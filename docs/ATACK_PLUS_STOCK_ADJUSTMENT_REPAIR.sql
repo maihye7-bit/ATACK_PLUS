@@ -60,9 +60,10 @@ DECLARE
  v_base_qty NUMERIC(18,4); v_total NUMERIC(18,4); v_stock UUID;
  v_journal UUID; v_inventory_account UUID; v_offset_account UUID;
  v_entry_no TEXT;
+ v_device_id UUID; v_device_token TEXT; v_shortage NUMERIC(18,4):=0;
 BEGIN
  SELECT c.app_user_id,c.already_processed INTO v_user,v_replay
-  FROM public._claim_business_operation(p_store_id,p_operation_id,'stock_adjustment',v_id,p_payload,'inventory.adjust') c;
+  FROM public._claim_business_operation(p_store_id,p_operation_id,'stock_adjustment',v_id,p_payload-'device_token','inventory.adjust') c;
  IF v_replay THEN RETURN jsonb_build_object('success',TRUE,'replayed',TRUE,'adjustment_id',v_id); END IF;
  v_location:=public.resolve_store_location_id(p_store_id,v_location);
 
@@ -102,8 +103,19 @@ BEGIN
    -- A privileged negative-stock adjustment may cross zero only when no
    -- reserved quantity exists. Check the special permission before the
    -- ordinary reserved-stock guard so callers receive the correct denial.
-   IF v_new_qty<0 AND NOT public.has_store_permission(p_store_id,'inventory.allow_negative') THEN
-     RAISE EXCEPTION 'Negative stock requires inventory.allow_negative' USING ERRCODE='42501';
+   IF v_new_qty<0 THEN
+     IF NOT public.has_store_permission(p_store_id,'inventory.allow_negative') THEN
+       RAISE EXCEPTION 'Negative stock requires inventory.allow_negative' USING ERRCODE='42501';
+     END IF;
+     v_shortage:=GREATEST(v_base_qty-(v_current_qty-v_reserved),0);
+     IF NULLIF(BTRIM(p_payload->>'device_id'),'') IS NULL
+        OR NULLIF(p_payload->>'device_token','') IS NULL THEN
+       RAISE EXCEPTION 'A registered device credential is required for negative stock'
+         USING ERRCODE='42501';
+     END IF;
+     v_device_id:=(p_payload->>'device_id')::UUID;
+     v_device_token:=p_payload->>'device_token';
+     PERFORM public.assert_sync_device_credential(p_store_id,v_device_id::TEXT,v_device_token);
    END IF;
    IF v_new_qty<v_reserved AND NOT (v_new_qty<0 AND v_reserved=0) THEN
      RAISE EXCEPTION 'Cannot adjust stock using reserved quantity' USING ERRCODE='23514';
@@ -111,10 +123,13 @@ BEGIN
  END IF;
 
  INSERT INTO public.stock_adjustments(id,store_id,adjustment_number,product_id,adjustment_type,
-   reason,quantity,unit_id,cost_per_unit,total_value,created_by,location_id)
+   reason,quantity,unit_id,cost_per_unit,total_value,created_by,location_id,
+   operation_id,device_id,shortage_quantity,negative_stock_authorized)
  VALUES(v_id,p_store_id,COALESCE(NULLIF(p_payload->>'adjustment_number',''),
    'ADJ-'||to_char(NOW(),'YYYYMMDD')||'-'||substr(replace(v_id::text,'-',''),1,8)),
-   v_product,v_type,v_reason,v_quantity,v_unit,v_cost_base,v_total,v_user,v_location);
+   v_product,v_type,v_reason,v_quantity,v_unit,v_cost_base,v_total,v_user,v_location,
+   p_operation_id,CASE WHEN v_shortage>0 THEN v_device_id ELSE NULL END,
+   v_shortage,(v_shortage>0));
 
  UPDATE public.stock SET quantity=v_new_qty WHERE id=v_stock;
  IF v_type='INCREASE' THEN
@@ -124,9 +139,12 @@ BEGIN
  END IF;
 
  INSERT INTO public.stock_movements(product_id,location_id,type,quantity,unit_id,cost_per_unit,total_value,
-   reference_id,reference_type,reason,user_id)
+   reference_id,reference_type,reason,user_id,operation_id,device_id,shortage_quantity,negative_stock_authorized)
  VALUES(v_product,v_location,'ADJUSTMENT',v_base_qty,v_primary,v_cost_base,v_total,
-   v_id,'adjustment','Stock adjustment: '||v_reason,v_user);
+   v_id,'adjustment',CASE WHEN v_shortage>0 THEN 'Negative stock adjustment: '||v_reason
+                          ELSE 'Stock adjustment: '||v_reason END,
+   v_user,p_operation_id,CASE WHEN v_shortage>0 THEN v_device_id ELSE NULL END,
+   v_shortage,(v_shortage>0));
 
  IF v_total>0 THEN
    INSERT INTO public.chart_of_accounts(store_id,account_code,account_name,account_type,is_active)
@@ -172,7 +190,8 @@ BEGIN
    INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,new_values_json)
    VALUES(p_store_id,v_user,'STOCK_ADJUSTMENT',v_id,'UPDATE',
      jsonb_build_object('event','NEGATIVE_STOCK','old_quantity',v_current_qty,'new_quantity',v_new_qty,
-       'adjusted_quantity',v_base_qty,'reason',v_reason,'permission','inventory.allow_negative'));
+       'adjusted_quantity',v_base_qty,'shortage_quantity',v_shortage,'reason',v_reason,
+       'permission','inventory.allow_negative','operation_id',p_operation_id,'device_id',v_device_id));
  END IF;
  RETURN jsonb_build_object('success',TRUE,'replayed',FALSE,'adjustment_id',v_id,
    'new_quantity',v_new_qty,'cost_per_unit',v_cost_base,'total_value',v_total);
