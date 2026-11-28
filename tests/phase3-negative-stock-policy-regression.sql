@@ -47,7 +47,7 @@ BEGIN
         RAISE EXCEPTION 'Owner fixture lacks inventory.allow_negative';
     END IF;
     v_payload:=jsonb_build_object(
-        'id',v_invoice,'invoice_number','D016-NEG-001','paid_amount',75,
+        'id',v_invoice,'invoice_number','D016-NEG-001','paid_amount',75,'payment_method','CASH',
         'reason','Approved emergency sale before replenishment',
         'device_id',v_device,'device_token',v_token,
         'location_id',v_location,
