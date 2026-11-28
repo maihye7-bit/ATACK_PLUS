@@ -9,6 +9,7 @@ DECLARE
   v_read_expr TEXT;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
+    'stock','stock_movements',
     'purchase_returns','purchase_return_items','stock_adjustments',
     'inventory_batches','stock_alerts','chart_of_accounts',
     'journal_entries','general_ledger',
