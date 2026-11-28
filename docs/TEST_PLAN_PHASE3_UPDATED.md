@@ -658,8 +658,8 @@ When the Flutter client is added, it must:
 
 ### D3.2 acceptance status
 
-- SQL Migration Smoke Test: R1–R6 passed on isolated PostgreSQL 16 CI, run [46133263331](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46133263331).
-- Real Supabase Auth/PostgREST D3.2 test: added to `.github/workflows/supabase-auth-smoke.yml`; its first complete run is pending.
+- SQL Migration Smoke Test: R1–R6 passed on isolated PostgreSQL 16 CI, run [46133874587](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46133874587).
+- Real Supabase Auth/PostgREST D3.2 test: [run 46133874590](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46133874590) — completed / success using real owner/seller JWTs. The test verified seller invoice isolation, owner visibility, hidden purchase filtering, delivery-bound ACK, cross-device rejection, Tombstone envelope, credential rotation and revocation.
 - Flutter local transaction and restart tests: not executable because the repository does not yet contain the Flutter application source.
 - Staging/production migration acceptance: not performed.
 - No persistent user database has been modified and no merge to `main` has been performed.
