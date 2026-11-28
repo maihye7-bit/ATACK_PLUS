@@ -1146,3 +1146,45 @@ The existing R3 1,201-event regression continues to cover 500/500/201 pagination
 - This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No Global Stream migration, client implementation, persistent DB execution or `main` merge is included.
+
+
+### 19.17 D3.2 / R7 — integrated CI, real Auth/PostgREST and client acceptance boundary
+
+**Status:** Server-side D3.2 R1–R7 implementation and CI integration completed on `repair/verified-fixes`. Client-side acceptance remains deferred until Flutter source exists.
+
+#### A. Real Auth/PostgREST coverage
+
+Added `tests/supabase-d32-sync-auth-smoke.sh` and extended `.github/workflows/supabase-auth-smoke.yml`. The workflow first runs the existing real Supabase Auth/business smoke test, then applies D3.2 migrations R1–R5 to the same local Supabase stack, reloads PostgREST schema cache, and exercises the new RPC contract with real owner/seller JWTs.
+
+The new real-JWT test verifies:
+- Owner registers a device for the owner and another for the seller.
+- Seller Pull receives only its own invoice; owner Pull receives both owner and seller invoices.
+- Seller receives no purchase events or hidden-event metadata; owner can Pull the purchase stream.
+- Repeated Pull before ACK returns the same delivery ID.
+- Fabricated delivery ID is rejected.
+- Another device cannot ACK the seller's page.
+- Valid ACK and duplicate ACK succeed.
+- Tombstone Pull emits canonical DELETE with original entity identity and separate Tombstone ID.
+- Credential rotation invalidates the old token and prevents ACK of a page issued under the old credential version; a fresh Pull creates a new delivery under the new version.
+- Revoked device credential cannot Pull.
+
+#### B. Final CI evidence
+
+- SQL Migration Smoke Test: [run 46133874587](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46133874587) — completed / success on commit `1fb96d2f3954ddb6f1c8771f2eb928356eaaf748`. All D3.2 R1–R6 migration and regression steps passed, including 1,201-event pagination, exact 499/500/501 boundaries, two-session concurrent-write continuation, Tombstone identity and two-device progress.
+- Supabase Auth integration: [run 46133874590](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46133874590) — completed / success on the same commit. Job `140944765496` passed the legacy real-Auth/business smoke and the new D3.2 real-JWT/PostgREST test.
+- Both workflows use isolated CI/local Supabase databases. No persistent user database was modified.
+
+#### C. Final acceptance boundary
+
+**Server-side D3.2 R1–R7:** implemented and validated by SQL Migration Smoke and real Supabase Auth/PostgREST CI.
+
+**Not yet accepted because client source is absent:**
+- Atomic local page application.
+- Persisting Delivery ID with local transaction.
+- No ACK on local transaction failure.
+- Crash/restart recovery before and after ACK.
+- Tombstone reconciliation against stale UPDATEs on Android/Windows.
+
+The repository still has no Flutter application source. These client requirements remain explicit future acceptance gates; they are not reported as passed.
+
+No staging or production migration was run, no physical purge/restore was added, no merge to `main` occurred, and no application release was performed.
