@@ -207,6 +207,8 @@ BEGIN
                 'cursor_after', v_cursor_after,
                 'cursor_through', v_cursor_through,
                 'credential_version', v_credential_version,
+                'event_count', v_event_count,
+                'has_more', v_has_more,
                 'events', v_events
             )::TEXT, 'UTF8'),
             'sha256'
