@@ -959,7 +959,7 @@ The existing device RLS/write policy required `sync.manage`, which is an owner-c
 
 Added `docs/PHASE3_REPAIR_006_DEVICE_CREDENTIAL_BINDING.sql`:
 - Adds a private `device_credentials` table binding device, store and assigned application user.
-- Stores only a SHA-256 digest of a 256-bit random bearer credential. The raw token is returned once by provisioning/rotation RPCs and is never stored in the table or audit log.
+- Stores only a SHA-256 digest of a 64-hex-character bearer credential generated from two UUID-v4 values (244 bits of entropy). The raw token is returned once by provisioning/rotation RPCs and is never stored in the table or audit log.
 - Adds owner-controlled `register_sync_device`, `rotate_sync_device_credential` and `revoke_sync_device` RPCs, requiring `sync.manage`.
 - Audits registration, credential rotation and revocation without recording the raw token.
 - Revokes direct authenticated INSERT/UPDATE/DELETE on `devices`; device management must use the audited lifecycle RPCs.
@@ -978,6 +978,11 @@ Authenticated clients must migrate to the credential-bearing RPC overloads and s
 
 Added `tests/phase3-device-credential-regression.sql` and CI steps after R1. The test covers owner provisioning, one-way hash storage, seller/device binding, wrong-token rejection, cross-user impersonation rejection, Pull/ACK/Push/apply using a valid token, tokenless RPC denial, token rotation, and revocation/idempotent revocation.
 
-**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+**CI evidence**
+- SQL migration smoke test: [run 46130691547](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46130691547) — completed / success on commit `9fc237c8b93a3f7f268d3cf7f20b42d7f1b98fe8`.
+- Job `140934952743`: D3.2 device credential migration and regression both completed / success.
+- Regression notices confirm owner provisioning, one-way hash storage, assigned seller Pull/ACK/Push/apply, cross-seller impersonation denial, credential rotation, previous-token rejection, idempotent revocation and revoked-device Pull denial.
+- Existing R1 Pull RBAC regression also passed in the same run.
+- This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No local, staging or production database was touched; no merge to `main` was performed.
