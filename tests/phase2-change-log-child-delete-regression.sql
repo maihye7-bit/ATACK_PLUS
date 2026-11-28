@@ -36,8 +36,9 @@ INSERT INTO public.payment_allocations(id,payment_id,invoice_id,allocated_amount
 INSERT INTO public.customer_ledgers(id,customer_id,type,amount,balance,reference_id,created_by) VALUES
  ('49000000-0000-4000-8000-000000000001','34000000-0000-4000-8000-000000000001','SALE',1,1,
   '36000000-0000-4000-8000-000000000001','32000000-0000-4000-8000-000000000001');
-INSERT INTO public.supplier_ledger(id,supplier_id,type,amount,balance,created_by) VALUES
- ('4a000000-0000-4000-8000-000000000001','35000000-0000-4000-8000-000000000001','PURCHASE',1,1,'32000000-0000-4000-8000-000000000001');
+INSERT INTO public.supplier_ledger(id,supplier_id,type,amount,balance,reference_id,created_by) VALUES
+ ('4a000000-0000-4000-8000-000000000001','35000000-0000-4000-8000-000000000001','PURCHASE',1,1,
+  '37000000-0000-4000-8000-000000000001','32000000-0000-4000-8000-000000000001');
 INSERT INTO public.supplier_payments(id,supplier_id,amount,payment_method,created_by) VALUES
  ('4b000000-0000-4000-8000-000000000001','35000000-0000-4000-8000-000000000001',1,'CASH','32000000-0000-4000-8000-000000000001');
 INSERT INTO public.return_items(id,return_id,product_id,quantity,unit_price,line_total) VALUES
