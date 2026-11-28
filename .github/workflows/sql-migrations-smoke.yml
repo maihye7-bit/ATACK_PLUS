@@ -264,6 +264,16 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-tombstone-event-contract-regression.sql"
+
+      # D3.2 / R5: retain legacy global Tombstone fields but use per-device ACK state.
+      - name: Apply D3.2 Tombstone sync-state semantics
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE3_REPAIR_009_TOMBSTONE_SYNC_STATE_SEMANTICS.sql"
+      - name: Run D3.2 per-device Tombstone progress regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-tombstone-device-progress-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
