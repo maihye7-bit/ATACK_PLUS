@@ -78,6 +78,9 @@ BEGIN
 END
 $seed_pages$;
 
+CREATE TEMP TABLE r3_seen_events(record_uuid UUID) ON COMMIT DROP;
+GRANT SELECT, INSERT ON r3_seen_events TO authenticated;
+
 SELECT set_config('request.jwt.claim.sub','20400000-0000-4000-8000-000000000032',TRUE);
 SET LOCAL ROLE authenticated;
 DO $seller_page_delivery$
@@ -117,9 +120,8 @@ BEGIN
     RAISE EXCEPTION 'First 500-event page contract is invalid: %',v_page;
   END IF;
   v_delivery := (v_page->>'delivery_id')::UUID;
-  v_ids := v_ids || ARRAY(
-      SELECT (e->>'record_uuid')::UUID FROM jsonb_array_elements(v_page->'events') e
-  );
+  INSERT INTO pg_temp.r3_seen_events(record_uuid)
+  SELECT (e->>'record_uuid')::UUID FROM jsonb_array_elements(v_page->'events') e;
 
   -- Retrying the same unacknowledged page returns the same delivery identity/hash.
   v_retry := public.get_unsynced_records_page(v_store,v_device,'products',v_token);
@@ -178,9 +180,8 @@ DECLARE
   v_token TEXT := current_setting('atack_test.d32_r3_token_a');
   v_delivery UUID;
   v_page JSONB;
-  v_ids UUID[] := ARRAY[]::UUID[];
   v_distinct INTEGER;
-  v_total INTEGER := 0;
+  v_total INTEGER;
   v_page_no INTEGER := 0;
   v_expected INTEGER;
   v_has_more BOOLEAN;
@@ -200,10 +201,8 @@ BEGIN
       RAISE EXCEPTION 'Unexpected page shape after first ACK: %',v_page;
     END IF;
     v_page_no := v_page_no + 1;
-    v_total := v_total + v_expected;
-    v_ids := v_ids || ARRAY(
-        SELECT (e->>'record_uuid')::UUID FROM jsonb_array_elements(v_page->'events') e
-    );
+    INSERT INTO pg_temp.r3_seen_events(record_uuid)
+    SELECT (e->>'record_uuid')::UUID FROM jsonb_array_elements(v_page->'events') e;
     v_delivery := (v_page->>'delivery_id')::UUID;
     IF NOT public.acknowledge_sync_cursor(v_store,v_device,'products',v_delivery,v_token) THEN
       RAISE EXCEPTION 'ACK failed for subsequent page %',v_page_no;
@@ -212,10 +211,12 @@ BEGIN
     IF v_page_no > 3 THEN RAISE EXCEPTION 'Pagination did not terminate'; END IF;
   END LOOP;
 
-  SELECT COUNT(DISTINCT x)::INTEGER INTO v_distinct FROM unnest(v_ids) x;
-  IF v_total <> 701 OR cardinality(v_ids) <> 701 OR v_distinct <> 701 THEN
-    RAISE EXCEPTION 'Pagination lost or duplicated events: total %, array %, distinct %',
-      v_total,cardinality(v_ids),v_distinct;
+  SELECT COUNT(*)::INTEGER, COUNT(DISTINCT record_uuid)::INTEGER
+    INTO v_total, v_distinct
+    FROM pg_temp.r3_seen_events;
+  IF v_total <> 1201 OR v_distinct <> 1201 THEN
+    RAISE EXCEPTION 'Pagination lost or duplicated events: total %, distinct %',
+      v_total,v_distinct;
   END IF;
   RAISE NOTICE 'PASS: sequential pages contain every visible event once, without gaps or duplicates';
 END
