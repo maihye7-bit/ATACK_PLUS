@@ -893,8 +893,8 @@ Both definitions of `public.trg_log_change()` were updated: the base schema defi
 
 #### B. Regression coverage
 
-Added `tests/phase2-change-log-child-delete-regression.sql` and a CI step after the D2 FK regression. The disposable PostgreSQL 16 test exercises DELETE events for all 11 parent-derived child tables, a store-owned category DELETE caused by the permitted store lifecycle cascade, atomic rollback when Change Log insertion fails, and catalog coverage for all 34 synchronized tables with enabled AFTER ROW INSERT/UPDATE/DELETE triggers bound to the effective function.
+Added `tests/phase2-change-log-child-delete-regression.sql` and a CI step after the D2 FK regression. The disposable PostgreSQL 16 test exercises DELETE events for all 11 parent-derived child tables, direct deletion of a store-owned category, fail-closed rollback of a store DELETE whose lifecycle cascade cannot retain the per-store cursor row, atomic rollback when Change Log insertion fails, and catalog coverage for all 34 synchronized tables with enabled AFTER ROW INSERT/UPDATE/DELETE triggers bound to the effective function.
 
 #### C. Boundaries
 
-Pull/ACK semantics, pagination, client reconciliation, generic Outbox behavior, and store/user/device lifecycle policy are unchanged and remain later D3 work. CI results will be appended after the workflow run. No persistent local/staging/production database execution and no merge to `main` are included.
+CI exposed that deleting a store can cascade-delete its store_sync_counters row before a cascaded category trigger allocates its DELETE cursor. D3.1 therefore verifies that this operation fails closed and rolls back parent and child, rather than claiming the cascade is sync-safe. An explicit store lifecycle/deletion policy and durable cursor strategy are deferred to the appropriate later D3 design; no store cascade policy or FK was changed here. Pull/ACK semantics, pagination, client reconciliation, and generic Outbox behavior remain unchanged. CI results will be appended after the workflow run. No persistent local/staging/production database execution and no merge to `main` are included.
