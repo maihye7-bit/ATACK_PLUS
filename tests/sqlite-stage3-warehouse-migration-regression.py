@@ -9,7 +9,7 @@ def uuid(n):
 
 db = sqlite3.connect(":memory:")
 db.execute("PRAGMA foreign_keys=ON")
-db.executescript("""
+db.executescript(f"""
 CREATE TABLE stores(id TEXT PRIMARY KEY,name TEXT NOT NULL);
 CREATE TABLE products(id TEXT PRIMARY KEY,store_id TEXT NOT NULL,FOREIGN KEY(store_id) REFERENCES stores(id));
 CREATE TABLE users(id TEXT PRIMARY KEY,store_id TEXT NOT NULL,FOREIGN KEY(store_id) REFERENCES stores(id));
