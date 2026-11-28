@@ -145,7 +145,7 @@ db.executescript("""
         FOREIGN KEY(return_id) REFERENCES purchase_returns(id) ON DELETE RESTRICT
     );
 """)
-db.executescript("\\n".join(trigger_sql))
+db.executescript("\n".join(trigger_sql))
 db.execute(
     """INSERT INTO purchase_returns
        (id,store_id,return_number,original_purchase_id,reason,total_amount,
