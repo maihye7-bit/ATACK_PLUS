@@ -176,9 +176,9 @@ BEGIN
       FROM public._claim_business_operation(p_store_id, p_operation_id, 'sale_invoice', v_invoice_id,
                                             p_payload, 'sales.write') c;
     IF v_replay THEN RETURN jsonb_build_object('success', TRUE, 'replayed', TRUE, 'invoice_id', v_invoice_id); END IF;
+    v_location := public.resolve_store_location_id(p_store_id,v_location);
     IF v_invoice_no IS NULL THEN RAISE EXCEPTION 'invoice_number is required'; END IF;
     IF v_paid < 0 THEN RAISE EXCEPTION 'paid_amount cannot be negative'; END IF;
-    IF v_location NOT IN ('main','warehouse','storage') THEN RAISE EXCEPTION 'Invalid stock location'; END IF;
     IF v_customer_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM public.customers c WHERE c.id=v_customer_id AND c.store_id=p_store_id AND c.is_active
     ) THEN RAISE EXCEPTION 'Customer does not belong to this store or is inactive'; END IF;
@@ -313,7 +313,8 @@ BEGIN
     SELECT c.app_user_id,c.already_processed INTO v_user,v_replay
       FROM public._claim_business_operation(p_store_id,p_operation_id,'purchase',v_id,p_payload,'purchases.write') c;
     IF v_replay THEN RETURN jsonb_build_object('success',TRUE,'replayed',TRUE,'purchase_id',v_id); END IF;
-    IF v_number IS NULL OR v_location NOT IN ('main','warehouse','storage') OR v_paid<0 THEN RAISE EXCEPTION 'Invalid purchase number, location or paid amount'; END IF;
+    v_location := public.resolve_store_location_id(p_store_id,v_location);
+    IF v_number IS NULL OR v_paid<0 THEN RAISE EXCEPTION 'Invalid purchase number or paid amount'; END IF;
     IF NOT EXISTS(SELECT 1 FROM public.suppliers WHERE id=v_supplier AND store_id=p_store_id AND is_active) THEN RAISE EXCEPTION 'Supplier does not belong to this store or is inactive'; END IF;
 
     FOR v_item IN SELECT e.value FROM jsonb_array_elements(p_payload->'items') AS e(value) ORDER BY e.value->>'product_id' LOOP
