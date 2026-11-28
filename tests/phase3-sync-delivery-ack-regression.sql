@@ -63,16 +63,16 @@ BEGIN
   WITH ids AS (
     SELECT gen_random_uuid() AS id FROM generate_series(1,1201)
   )
-  SELECT public.log_change(
-      v_store,'products',ids.id,'UPDATE',NULL,
+  PERFORM public.log_change(
+      v_store,'products,ids.id,'UPDATE',NULL,
       jsonb_build_object('id',ids.id,'store_id',v_store,'name','D3.2 R3 visible fixture')
   ) FROM ids;
 
   WITH ids AS (
     SELECT gen_random_uuid() AS id FROM generate_series(1,601)
   )
-  SELECT public.log_change(
-      v_store,'purchases',ids.id,'INSERT',NULL,
+  PERFORM public.log_change(
+      v_store,'purchases,ids.id,'INSERT',NULL,
       jsonb_build_object('id',ids.id,'store_id',v_store,'purchase_number','D3.2 R3 hidden fixture')
   ) FROM ids;
 END
