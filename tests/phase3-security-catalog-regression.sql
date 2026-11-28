@@ -2,6 +2,7 @@
 DO $security_catalog_test$
 DECLARE
   r RECORD;
+  v_table TEXT;
   v_count INTEGER;
 BEGIN
   SELECT count(*) INTO v_count
@@ -17,19 +18,19 @@ BEGIN
      WHERE n.nspname='public' AND c.relkind IN ('r','p')
   LOOP
     IF NOT r.relrowsecurity THEN
-      RAISE EXCEPTION 'RLS is disabled on public table %', r.relname;
+      RAISE EXCEPTION 'RLS is disabled on public table %', v_table;
     END IF;
-    IF has_table_privilege('anon', format('public.%I',r.relname), 'INSERT')
-       OR has_table_privilege('anon', format('public.%I',r.relname), 'UPDATE')
-       OR has_table_privilege('anon', format('public.%I',r.relname), 'DELETE')
-       OR has_table_privilege('anon', format('public.%I',r.relname), 'TRUNCATE') THEN
-      RAISE EXCEPTION 'anon has direct write privilege on public.%', r.relname;
+    IF has_table_privilege('anon', format('public.%I',v_table), 'INSERT')
+       OR has_table_privilege('anon', format('public.%I',v_table), 'UPDATE')
+       OR has_table_privilege('anon', format('public.%I',v_table), 'DELETE')
+       OR has_table_privilege('anon', format('public.%I',v_table), 'TRUNCATE') THEN
+      RAISE EXCEPTION 'anon has direct write privilege on public.%', v_table;
     END IF;
   END LOOP;
 
   -- Financial, inventory-derived, identity, audit and synchronization state
   -- must not be directly mutated through PostgREST by authenticated clients.
-  FOREACH r.relname IN ARRAY ARRAY[
+  FOREACH v_table IN ARRAY ARRAY[
     'invoices','invoice_items','purchases','purchase_items','stock','stock_movements',
     'customer_ledgers','customer_payments','payment_allocations','supplier_ledger',
     'supplier_payments','sales_returns','return_items','expenses','revenues',
@@ -42,11 +43,11 @@ BEGIN
     -- Master records use the dedicated soft-delete RPC; REST DELETE is never allowed.
     'categories','brands','products','customers','suppliers'
   ] LOOP
-    IF has_table_privilege('authenticated', format('public.%I',r.relname), 'INSERT')
-       OR has_table_privilege('authenticated', format('public.%I',r.relname), 'UPDATE')
-       OR has_table_privilege('authenticated', format('public.%I',r.relname), 'DELETE')
-       OR has_table_privilege('authenticated', format('public.%I',r.relname), 'TRUNCATE') THEN
-      RAISE EXCEPTION 'authenticated has direct write privilege on protected table public.%', r.relname;
+    IF has_table_privilege('authenticated', format('public.%I',v_table), 'INSERT')
+       OR has_table_privilege('authenticated', format('public.%I',v_table), 'UPDATE')
+       OR has_table_privilege('authenticated', format('public.%I',v_table), 'DELETE')
+       OR has_table_privilege('authenticated', format('public.%I',v_table), 'TRUNCATE') THEN
+      RAISE EXCEPTION 'authenticated has direct write privilege on protected table public.%', v_table;
     END IF;
   END LOOP;
 
@@ -84,14 +85,14 @@ BEGIN
 
   -- Master-data soft deletion is RPC-only: confirm the restrictive DELETE
   -- deny policy exists in addition to the missing direct table privilege.
-  FOREACH r.relname IN ARRAY ARRAY['categories','brands','products','customers','suppliers'] LOOP
+  FOREACH v_table IN ARRAY ARRAY['categories','brands','products','customers','suppliers'] LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_policies
-       WHERE schemaname='public' AND tablename=r.relname
-         AND policyname='sec_deny_direct_delete_'||r.relname
+       WHERE schemaname='public' AND tablename=v_table
+         AND policyname='sec_deny_direct_delete_'||v_table
          AND permissive='RESTRICTIVE' AND cmd='DELETE'
     ) THEN
-      RAISE EXCEPTION 'Missing restrictive direct DELETE denial for public.%',r.relname;
+      RAISE EXCEPTION 'Missing restrictive direct DELETE denial for public.%',v_table;
     END IF;
   END LOOP;
 
