@@ -166,7 +166,7 @@ BEGIN
         PERFORM public.process_sale_invoice(v_store,
             'a3000000-0000-4000-8000-000000000102'::UUID,
             v_payload || jsonb_build_object('id','a3000000-0000-4000-8000-000000000103',
-                'invoice_number','D016-REVOKED-DEVICE','items',
+                'invoice_number','D016-REVOKED-DEVICE','paid_amount',15,'payment_method','CASH','items',
                 jsonb_build_array(jsonb_build_object('product_id',v_product,'quantity',1,'unit_id','pcs','unit_price',15))));
     EXCEPTION WHEN OTHERS THEN v_rejected:=TRUE;
     END;
