@@ -48,7 +48,7 @@ DECLARE
   v_purchases INTEGER;
 BEGIN
   SELECT quantity INTO v_stock FROM public.stock
-   WHERE product_id='50000000-0000-4000-8000-000000000009' AND location_id='main';
+   WHERE product_id='50000000-0000-4000-8000-000000000009' AND location_id=(SELECT id FROM public.locations WHERE store_id='10000000-0000-4000-8000-000000000001' AND code='main');
   SELECT cost_price INTO v_cost FROM public.products
    WHERE id='50000000-0000-4000-8000-000000000009';
   SELECT count(*) INTO v_purchases FROM public.purchases
@@ -143,7 +143,7 @@ DECLARE
   v_processed INTEGER;
 BEGIN
   SELECT quantity INTO v_stock FROM public.stock
-   WHERE product_id='50000000-0000-4000-8000-000000000010' AND location_id='main';
+   WHERE product_id='50000000-0000-4000-8000-000000000010' AND location_id=(SELECT id FROM public.locations WHERE store_id='10000000-0000-4000-8000-000000000001' AND code='main');
   SELECT count(*) INTO v_invoices FROM public.invoices
    WHERE id IN ('80000000-0000-4000-8000-000000000041',
                 '80000000-0000-4000-8000-000000000042');
