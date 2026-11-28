@@ -43,6 +43,9 @@ BEGIN
 
     -- Owner with permission, reason and active device credential may sell below zero.
     PERFORM set_config('request.jwt.claim.sub',v_owner_auth::TEXT,TRUE);
+    IF NOT public.has_store_permission(v_store,'inventory.allow_negative') THEN
+        RAISE EXCEPTION 'Owner fixture lacks inventory.allow_negative';
+    END IF;
     v_payload:=jsonb_build_object(
         'id',v_invoice,'invoice_number','D016-NEG-001','paid_amount',75,
         'reason','Approved emergency sale before replenishment',
@@ -113,6 +116,10 @@ BEGIN
 
     -- Seller can create sales but does not hold inventory.allow_negative.
     PERFORM set_config('request.jwt.claim.sub',v_seller_auth::TEXT,TRUE);
+    IF NOT public.has_store_permission(v_store,'sales.write')
+       OR public.has_store_permission(v_store,'inventory.allow_negative') THEN
+        RAISE EXCEPTION 'Seller permission fixture does not represent sales-only access';
+    END IF;
     v_rejected:=FALSE;
     BEGIN
         PERFORM public.process_sale_invoice(v_store,
