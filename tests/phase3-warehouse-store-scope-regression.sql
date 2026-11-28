@@ -60,6 +60,17 @@ BEGIN
     IF public.resolve_store_location_id(v_store_a,'main') IS DISTINCT FROM v_location_a THEN
         RAISE EXCEPTION 'Store-local location code resolution failed';
     END IF;
+    IF has_table_privilege('authenticated','public.locations','INSERT')
+       OR has_table_privilege('authenticated','public.locations','UPDATE')
+       OR has_table_privilege('authenticated','public.locations','DELETE') THEN
+        RAISE EXCEPTION 'Authenticated users retain direct warehouse DML privileges';
+    END IF;
+    IF NOT has_function_privilege('authenticated',
+        'public.create_store_location(uuid,text,text,boolean)','EXECUTE')
+       OR NOT has_function_privilege('authenticated',
+        'public.deactivate_store_location(uuid,text)','EXECUTE') THEN
+        RAISE EXCEPTION 'Warehouse owner RPCs are not granted to authenticated users';
+    END IF;
     BEGIN
         PERFORM public.resolve_store_location_id(v_store_a,v_location_b);
         RAISE EXCEPTION 'Cross-store location UUID unexpectedly resolved';
