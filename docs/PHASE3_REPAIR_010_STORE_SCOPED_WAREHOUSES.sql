@@ -320,7 +320,7 @@ BEGIN
     VALUES(gen_random_uuid()::TEXT,p_store_id,p_code,BTRIM(p_name),COALESCE(p_is_default,FALSE),TRUE)
     RETURNING id INTO v_id;
     INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,new_values_json)
-    SELECT p_store_id,u.id,'LOCATION',v_id,'CREATE',
+    SELECT p_store_id,u.id,'LOCATION',v_id::UUID,'CREATE',
            jsonb_build_object('code',p_code,'name',BTRIM(p_name),'is_default',COALESCE(p_is_default,FALSE))
       FROM public.users u WHERE u.auth_user_id=auth.uid() AND u.store_id=p_store_id;
     RETURN v_id;
@@ -354,7 +354,7 @@ BEGIN
      WHERE id=p_location_id AND store_id=p_store_id AND is_active;
     IF NOT FOUND THEN RAISE EXCEPTION 'Warehouse not found or already inactive'; END IF;
     INSERT INTO public.audit_logs(store_id,user_id,entity_type,entity_id,action,old_values_json)
-    VALUES(p_store_id,v_user,'LOCATION',p_location_id,'DEACTIVATE',
+    VALUES(p_store_id,v_user,'LOCATION',p_location_id::UUID,'DEACTIVATE',
            jsonb_build_object('location_id',p_location_id));
 END;
 $deactivate_location$;
