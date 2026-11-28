@@ -224,6 +224,10 @@ jobs:
       - name: Run offline SQLite owner/seller role migration regression
         run: python tests/sqlite-owner-seller-role-regression.py
 
+      # Stage 2: SQLite history FKs must match PostgreSQL retention semantics.
+      - name: Run SQLite Stage 2 history-retention regression
+        run: python tests/sqlite-stage2-history-retention-regression.py
+
       # D3.2 / R1: SECURITY DEFINER Pull must enforce the same owner/seller visibility
       # contract as direct table reads. This runs only in the disposable PostgreSQL CI service.
       - name: Apply D3.2 Pull RBAC hardening
