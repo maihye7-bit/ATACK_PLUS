@@ -20,14 +20,14 @@ CREATE TABLE locations(
 );
 CREATE TABLE stock(
   id TEXT PRIMARY KEY,product_id TEXT NOT NULL,location_id TEXT NOT NULL DEFAULT 'main',
-  quantity NUMERIC NOT NULL DEFAULT 0,reserved_quantity NUMERIC NOT NULL DEFAULT 0,
+  quantity NUMERIC NOT NULL DEFAULT 0,reserved_quantity NUMERIC NOT NULL DEFAULT 0,last_updated TEXT DEFAULT (datetime('now')),
   FOREIGN KEY(product_id) REFERENCES products(id),
   FOREIGN KEY(location_id) REFERENCES locations(id)
 );
 CREATE TABLE stock_movements(
   id TEXT PRIMARY KEY,product_id TEXT NOT NULL,location_id TEXT NOT NULL DEFAULT 'main',
   type TEXT NOT NULL,quantity NUMERIC NOT NULL,unit_id TEXT NOT NULL,
-  cost_per_unit NUMERIC NOT NULL,total_value NUMERIC NOT NULL,user_id TEXT NOT NULL,
+  cost_per_unit NUMERIC NOT NULL,total_value NUMERIC NOT NULL,user_id TEXT NOT NULL,created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY(product_id) REFERENCES products(id),
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
