@@ -67,7 +67,18 @@ db.execute("PRAGMA foreign_keys=ON")
 # D-016 upgrade removes the legacy non-negative CHECK while requiring
 # operation/device/reason evidence before a local stock balance can go below zero.
 NEGATIVE_MIGRATION = (ROOT / "docs" / "SQLITE_MIGRATION_PHASE3_NEGATIVE_STOCK.sql").read_text(encoding="utf-8")
-db.executescript(NEGATIVE_MIGRATION)
+# Capture the exact SQLite statement/trigger context if an upgrade fails.
+migration_trace = []
+db.set_trace_callback(lambda statement: migration_trace.append(statement))
+try:
+    db.executescript(NEGATIVE_MIGRATION)
+except sqlite3.Error:
+    print("SQLite negative-stock migration trace (last 25 statements):")
+    for statement in migration_trace[-25:]:
+        print(f"  {statement}")
+    raise
+finally:
+    db.set_trace_callback(None)
 db.execute("PRAGMA foreign_keys=ON")
 
 # Legacy rows are remapped to independent per-store UUID locations without losing balances.
