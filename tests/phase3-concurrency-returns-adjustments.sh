@@ -137,7 +137,7 @@ BEGIN
   SELECT current_debt,credit_balance INTO v_debt,v_credit
     FROM public.customers WHERE id='90000000-0000-4000-8000-000000000012';
   SELECT quantity INTO v_stock FROM public.stock
-    WHERE product_id='50000000-0000-4000-8000-000000000012' AND location_id='main';
+    WHERE product_id='50000000-0000-4000-8000-000000000012' AND location_id=(SELECT id FROM public.locations WHERE store_id='10000000-0000-4000-8000-000000000001' AND code='main');
   SELECT count(*),COALESCE(sum(applied_to_debt),0),COALESCE(sum(customer_credit_created),0)
     INTO v_returns,v_applied,v_credit_created FROM public.sales_returns
    WHERE id IN ('91000000-0000-4000-8000-000000000051',
@@ -223,7 +223,7 @@ DECLARE
   v_journals INTEGER;
 BEGIN
   SELECT quantity INTO v_stock FROM public.stock
-   WHERE product_id='50000000-0000-4000-8000-000000000013' AND location_id='main';
+   WHERE product_id='50000000-0000-4000-8000-000000000013' AND location_id=(SELECT id FROM public.locations WHERE store_id='10000000-0000-4000-8000-000000000001' AND code='main');
   SELECT count(*) INTO v_adjustments FROM public.stock_adjustments
    WHERE id IN ('92000000-0000-4000-8000-000000000061',
                 '92000000-0000-4000-8000-000000000062');
