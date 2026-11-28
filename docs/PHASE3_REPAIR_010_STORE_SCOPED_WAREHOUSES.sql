@@ -8,7 +8,7 @@ BEGIN;
 SELECT pg_advisory_xact_lock(hashtext('atack_plus:stage3:store_scoped_warehouses'));
 
 LOCK TABLE public.stores, public.locations, public.products,
-           public.stock, public.stock_movements
+           public.stock, public.stock_movements, public.stock_adjustments
     IN ACCESS EXCLUSIVE MODE;
 
 DO $preflight$
@@ -290,7 +290,7 @@ CREATE POLICY locations_owner_manage ON public.locations
              WITH CHECK (store_id=public.current_user_store_id()
                          AND public.has_store_permission(store_id,'users.manage'));
 
-REVOKE INSERT,UPDATE,DELETE ON public.locations FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.locations FROM PUBLIC,anon,authenticated;
 GRANT SELECT ON public.locations TO authenticated;
 
 -- Location configuration is append/deactivate only; never physically delete history.
