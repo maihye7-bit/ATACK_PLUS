@@ -31,6 +31,12 @@ VALUES ('99200000-0000-4000-8000-000000000001',
         'D32-R1-CUSTOMER','D3.2 R1 Customer')
 ON CONFLICT (id) DO NOTHING;
 
+INSERT INTO public.suppliers(id,store_id,code,name)
+VALUES ('99200000-0000-4000-8000-000000000002',
+        '10000000-0000-4000-8000-000000000001',
+        'D32-R1-SUPPLIER','D3.2 R1 Supplier')
+ON CONFLICT (id) DO NOTHING;
+
 INSERT INTO public.invoices(
  id,store_id,invoice_number,type,customer_id,invoice_date,total_amount,
  paid_amount,remaining_amount,created_by,status
@@ -132,6 +138,23 @@ SELECT public.log_change(
  jsonb_build_object('id','99500000-0000-4000-8000-000000000021',
    'store_id','10000000-0000-4000-8000-000000000001'));
 SELECT public.log_change(
+ '10000000-0000-4000-8000-000000000001','sales_returns',
+ '99600000-0000-4000-8000-000000000011','INSERT',NULL,
+ jsonb_build_object('id','99600000-0000-4000-8000-000000000011',
+   'store_id','10000000-0000-4000-8000-000000000001',
+   'original_invoice_id','99400000-0000-4000-8000-000000000011'));
+SELECT public.log_change(
+ '10000000-0000-4000-8000-000000000001','sales_returns',
+ '99600000-0000-4000-8000-000000000012','INSERT',NULL,
+ jsonb_build_object('id','99600000-0000-4000-8000-000000000012',
+   'store_id','10000000-0000-4000-8000-000000000001',
+   'original_invoice_id','99400000-0000-4000-8000-000000000012'));
+SELECT public.log_change(
+ '10000000-0000-4000-8000-000000000001','supplier_payments',
+ '99500000-0000-4000-8000-000000000022','INSERT',NULL,
+ jsonb_build_object('id','99500000-0000-4000-8000-000000000022',
+   'supplier_id','99200000-0000-4000-8000-000000000002'));
+SELECT public.log_change(
  '10000000-0000-4000-8000-000000000001','products',
  '50000000-0000-4000-8000-000000000001','UPDATE',NULL,
  jsonb_build_object('id','50000000-0000-4000-8000-000000000001',
@@ -198,6 +221,26 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.get_unsynced_records(
       '10000000-0000-4000-8000-000000000001',
+      '99300000-0000-4000-8000-000000000001','sales_returns',0)
+      WHERE record_uuid='99600000-0000-4000-8000-000000000011')
+     OR EXISTS (SELECT 1 FROM public.get_unsynced_records(
+      '10000000-0000-4000-8000-000000000001',
+      '99300000-0000-4000-8000-000000000001','sales_returns',0)
+      WHERE record_uuid='99600000-0000-4000-8000-000000000012') THEN
+    RAISE EXCEPTION 'Seller A Pull did not inherit original invoice ownership for sales returns';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.get_unsynced_records(
+      '10000000-0000-4000-8000-000000000001',
+      '99300000-0000-4000-8000-000000000001','customer_ledgers',0)
+      WHERE record_uuid='99900000-0000-4000-8000-000000000011')
+     OR EXISTS (SELECT 1 FROM public.get_unsynced_records(
+      '10000000-0000-4000-8000-000000000001',
+      '99300000-0000-4000-8000-000000000001','customer_ledgers',0)
+      WHERE record_uuid='99900000-0000-4000-8000-000000000012') THEN
+    RAISE EXCEPTION 'Seller A Pull did not isolate customer ledger rows';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.get_unsynced_records(
+      '10000000-0000-4000-8000-000000000001',
       '99300000-0000-4000-8000-000000000001','customer_payments',0)
       WHERE record_uuid='99800000-0000-4000-8000-000000000011')
      OR EXISTS (SELECT 1 FROM public.get_unsynced_records(
@@ -205,6 +248,12 @@ BEGIN
       '99300000-0000-4000-8000-000000000001','customer_payments',0)
       WHERE record_uuid='99800000-0000-4000-8000-000000000012') THEN
     RAISE EXCEPTION 'Seller A Pull did not isolate customer payments';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.get_unsynced_records(
+      '10000000-0000-4000-8000-000000000001',
+      '99300000-0000-4000-8000-000000000001','supplier_payments',0)
+      WHERE record_uuid='99500000-0000-4000-8000-000000000022') THEN
+    RAISE EXCEPTION 'Seller Pull exposed supplier payment events without suppliers.payments';
   END IF;
   IF EXISTS (SELECT 1 FROM public.get_unsynced_records(
       '10000000-0000-4000-8000-000000000001',
@@ -265,6 +314,10 @@ BEGIN
       '10000000-0000-4000-8000-000000000001',
       '99300000-0000-4000-8000-000000000001','invoices',0)
       WHERE record_uuid='99400000-0000-4000-8000-000000000012')
+     OR NOT EXISTS (SELECT 1 FROM public.get_unsynced_records(
+      '10000000-0000-4000-8000-000000000001',
+      '99300000-0000-4000-8000-000000000001','supplier_payments',0)
+      WHERE record_uuid='99500000-0000-4000-8000-000000000022')
      OR NOT EXISTS (SELECT 1 FROM public.get_unsynced_records(
       '10000000-0000-4000-8000-000000000001',
       '99300000-0000-4000-8000-000000000001','purchases',0)
