@@ -622,3 +622,44 @@ The earlier CI result for the five-role matrix (runs `45905700046` and `45905699
 Both runs completed successfully on commit `f8a93b05662fe20f85e6d3af4ea275312f286983`. The migration was applied only to isolated CI databases; no production or user database was changed.
 
 Scope note: the database/RPC/RLS role correction is verified in CI, but this repository branch contains no frontend or application UI source files, so seller/owner screen visibility and client-side role checks could not be inspected here. This is not staging or production acceptance and does not complete the overall Phase 3 security gate.
+
+
+## D3.2 — Delete Event Contract, Tombstone and Reliable Pull/ACK
+
+This section adds the integrated acceptance suite for the D3.2 server synchronization contract. It complements, and does not replace, the existing Stage 3 regression coverage.
+
+### D3.2 test inventory
+
+| Part | Test file / workflow | Required result |
+|---|---|---|
+| R1 — Pull RBAC | `tests/phase3-sync-pull-rbac-regression.sql` | Seller sees own sales chain and permitted shared data; owner sees all store data; hidden financial/purchase events are not exposed |
+| R2 — Device credentials | `tests/phase3-device-credential-regression.sql` | Correct user/device/token binding; wrong token, cross-user device, rotated or revoked credential rejected |
+| R3 — Delivery ACK | `tests/phase3-sync-delivery-ack-regression.sql` | Only a server-issued page can be ACKed; page replay stable; cross-device ACK rejected; duplicate ACK idempotent |
+| R3/R6 — Large pages | `tests/phase3-sync-delivery-ack-regression.sql` | 1,201 visible events are delivered in 500/500/201 pages without gaps or duplicates |
+| R4 — Tombstone identity | `tests/phase3-tombstone-event-contract-regression.sql` | Canonical DELETE envelope contains original entity identity and separate tombstone ID; tombstone is logged before target UPDATE |
+| R5 — Device progress | `tests/phase3-tombstone-device-progress-regression.sql` | Two devices advance independently; legacy global Tombstone fields do not imply all-device delivery |
+| R6 — Page boundaries | `tests/phase3-sync-pagination-boundary-regression.sql` | 499, 500 and 501 event boundaries are correct |
+| R6 — Concurrent writes | `tests/phase3-sync-page-concurrency.sh` | Event committed after page snapshot appears on the next page after ACK, with no gap |
+| R7 — Real Auth/PostgREST | `tests/supabase-d32-sync-auth-smoke.sh` | Real Supabase JWTs exercise seller/owner Pull, device registration/rotation/revocation, delivery ACK and canonical Tombstone event |
+
+### Client acceptance requirements
+
+When the Flutter client is added, it must:
+1. Store the device token only in the platform secure store (Android Keystore / Windows protected credential storage); never log or serialize it into ordinary application logs.
+2. Request pages without supplying a client-chosen Cursor.
+3. Apply all visible events in one local database transaction.
+4. Persist the Delivery ID in the same local transaction as the event changes.
+5. ACK only after local commit succeeds.
+6. If the local transaction fails, do not ACK; retry the same server page.
+7. If local commit succeeds but the ACK response is lost, retry the same Delivery ID; server ACK is idempotent.
+8. Apply Tombstone by `store_id + table_name + record_uuid`, preserve `tombstone_id` separately, and never let an older UPDATE reactivate a deleted record.
+9. Continue to the next page only after ACK of the current page.
+10. Test restart, offline retry, duplicate delivery, two devices, stale UPDATE after Tombstone, and local rollback.
+
+### D3.2 acceptance status
+
+- SQL Migration Smoke Test: R1–R6 passed on isolated PostgreSQL 16 CI, run [46133263331](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46133263331).
+- Real Supabase Auth/PostgREST D3.2 test: added to `.github/workflows/supabase-auth-smoke.yml`; its first complete run is pending.
+- Flutter local transaction and restart tests: not executable because the repository does not yet contain the Flutter application source.
+- Staging/production migration acceptance: not performed.
+- No persistent user database has been modified and no merge to `main` has been performed.
