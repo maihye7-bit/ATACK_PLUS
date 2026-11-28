@@ -526,8 +526,6 @@ DECLARE
  v_result JSONB; v_qty NUMERIC(18,4); v_cost NUMERIC(18,4);
  v_debit NUMERIC(18,4); v_credit NUMERIC(18,4); v_total NUMERIC(18,4);
  v_journal UUID; v_count INTEGER;
- v_device UUID:='a3000000-0000-4000-8000-000000000081';
- v_device_token TEXT:=repeat('d',64);
 BEGIN
  PERFORM set_config('request.jwt.claim.sub',v_owner_auth::text,TRUE);
  INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,is_active)
@@ -604,18 +602,11 @@ BEGIN
  IF v_qty IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'Denied negative adjustment changed stock: %',v_qty; END IF;
 
  -- Only the owner has inventory.adjust and inventory.allow_negative; the exception is audited.
- -- D-016 also requires a registered device credential bound to this store.
- INSERT INTO public.devices(id,store_id,device_name,device_type,is_online)
- VALUES(v_device,v_store,'Phase 2 stock adjustment test device','DESKTOP',FALSE);
- INSERT INTO public.device_credentials(device_id,store_id,user_id,registered_by,token_hash,credential_version,issued_at)
- VALUES(v_device,v_store,v_owner,v_owner,
-   encode(public.atack_digest(convert_to(v_device_token,'UTF8'),'sha256'),'hex'),1,NOW());
  PERFORM set_config('request.jwt.claim.sub',v_owner_auth::text,TRUE);
  v_result:=public.process_stock_adjustment(v_store,'60000000-0000-4000-8000-000000000027',
   jsonb_build_object('id','76000000-0000-4000-8000-000000000011',
    'adjustment_number','ADJ-PH2-004','product_id',v_product,'adjustment_type','DECREASE',
-   'reason','Approved negative stock test','quantity',6,'unit_id','pcs',
-    'device_id',v_device,'device_token',v_device_token));
+   'reason','Approved negative stock test','quantity',6,'unit_id','pcs'));
  SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  IF v_qty IS DISTINCT FROM -2 OR NOT EXISTS(SELECT 1 FROM public.audit_logs
     WHERE entity_id='76000000-0000-4000-8000-000000000011' AND action='UPDATE'
