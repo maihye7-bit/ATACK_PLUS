@@ -141,7 +141,7 @@ ALTER TABLE public.locations
     ADD CONSTRAINT locations_pkey PRIMARY KEY (id),
     ADD CONSTRAINT uq_locations_id_store UNIQUE (id,store_id),
     ADD CONSTRAINT uq_locations_store_code UNIQUE (store_id,code),
-    ADD CONSTRAINT fk_locations_store FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT fk_locations_store FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
 
 INSERT INTO public.locations(id,store_id,code,name,is_default,is_active)
 SELECT new_id,store_id,old_id,location_name,was_default,TRUE
