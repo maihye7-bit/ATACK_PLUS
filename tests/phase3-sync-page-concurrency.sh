@@ -8,54 +8,51 @@ OWNER_ID='99100000-0000-4000-8000-000000000061'
 SELLER_ID='99100000-0000-4000-8000-000000000062'
 OWNER_AUTH='20700000-0000-4000-8000-000000000061'
 SELLER_AUTH='20700000-0000-4000-8000-000000000062'
+DEVICE_ID='99400000-0000-4000-8000-000000000061'
+DEVICE_TOKEN='a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0'
 EVENT_A='99300000-0000-4000-8000-000000000061'
 EVENT_B='99300000-0000-4000-8000-000000000062'
 tmp_a="$(mktemp)"
-device_id=''
-device_token=''
 
 cleanup() {
-  if [[ -n "${device_id}" ]]; then
-    "${PSQL[@]}" >/dev/null 2>&1 <<SQL || true
-DELETE FROM public.sync_delivery_pages WHERE device_id='${device_id}';
-DELETE FROM public.sync_cursors WHERE device_id='${device_id}';
-DELETE FROM public.device_credentials WHERE device_id='${device_id}';
-DELETE FROM public.devices WHERE id='${device_id}';
-DELETE FROM public.audit_logs WHERE user_id IN ('${OWNER_ID}','${SELLER_ID}');
+  "${PSQL[@]}" >/dev/null 2>&1 <<SQL || true
+DELETE FROM public.sync_delivery_pages WHERE device_id='${DEVICE_ID}';
+DELETE FROM public.sync_cursors WHERE device_id='${DEVICE_ID}';
+DELETE FROM public.device_credentials WHERE device_id='${DEVICE_ID}';
+DELETE FROM public.devices WHERE id='${DEVICE_ID}';
 DELETE FROM public.change_log WHERE store_id='${STORE}' AND record_uuid IN ('${EVENT_A}','${EVENT_B}');
 DELETE FROM public.users WHERE id IN ('${OWNER_ID}','${SELLER_ID}');
 SQL
-  fi
   rm -f "${tmp_a}"
 }
 trap cleanup EXIT
 
-# Provision an owner and seller-bound device; capture the one-time token.
-device_result="$("${PSQL[@]}" -Atq <<SQL
-BEGIN;
+# This concurrency test provisions a private credential fixture directly as
+# the database owner. The R2 lifecycle RPCs and their audit trail are tested
+# separately; avoiding an audit-log write here keeps this fixture removable.
+"${PSQL[@]}" >/dev/null <<SQL
+DELETE FROM public.sync_delivery_pages WHERE device_id='${DEVICE_ID}';
+DELETE FROM public.sync_cursors WHERE device_id='${DEVICE_ID}';
+DELETE FROM public.device_credentials WHERE device_id='${DEVICE_ID}';
+DELETE FROM public.devices WHERE id='${DEVICE_ID}';
+DELETE FROM public.change_log WHERE store_id='${STORE}' AND record_uuid IN ('${EVENT_A}','${EVENT_B}');
+DELETE FROM public.users WHERE id IN ('${OWNER_ID}','${SELLER_ID}');
+
 INSERT INTO public.users(id,auth_user_id,store_id,username,full_name,is_active)
 VALUES
  ('${OWNER_ID}','${OWNER_AUTH}','${STORE}','d32_r6_concurrency_owner','D3.2 R6 Owner',TRUE),
  ('${SELLER_ID}','${SELLER_AUTH}','${STORE}','d32_r6_concurrency_seller','D3.2 R6 Seller',TRUE);
 INSERT INTO public.user_roles(user_id,role_id)
 VALUES ('${OWNER_ID}','owner'),('${SELLER_ID}','cashier');
-DO \$jwt\$
-BEGIN
-  PERFORM set_config('request.jwt.claim.sub','${OWNER_AUTH}',TRUE);
-  PERFORM set_config('request.jwt.claim.role','authenticated',TRUE);
-END
-\$jwt\$;
-SET LOCAL ROLE authenticated;
-SELECT (r->>'device_id') || '|' || (r->>'device_token')
-  FROM (SELECT public.register_sync_device('${SELLER_ID}','D3.2 R6 Concurrent Device','DESKTOP') AS r) q;
-COMMIT;
+INSERT INTO public.devices(id,store_id,device_name,device_type)
+VALUES ('${DEVICE_ID}','${STORE}','D3.2 R6 Concurrent Device','DESKTOP');
+INSERT INTO public.device_credentials(
+  device_id,store_id,user_id,registered_by,token_hash,credential_version
+) VALUES (
+  '${DEVICE_ID}','${STORE}','${SELLER_ID}','${OWNER_ID}',
+  encode(public.atack_digest(convert_to('${DEVICE_TOKEN}','UTF8'),'sha256'),'hex'),1
+);
 SQL
-)"
-IFS='|' read -r device_id device_token <<< "$device_result"
-if [[ -z "${device_id}" || -z "${device_token}" ]]; then
-  echo "FAIL: owner device provisioning returned no device ID/token"
-  exit 1
-fi
 
 # Establish a per-device checkpoint and one visible event before the first Pull.
 "${PSQL[@]}" >/dev/null <<SQL
@@ -65,7 +62,7 @@ BEGIN
   SELECT COALESCE(MAX(sync_cursor),0) INTO v_base
     FROM public.change_log WHERE store_id='${STORE}' AND table_name='products';
   INSERT INTO public.sync_cursors(store_id,device_id,table_name,last_pull_seq,cursor_value)
-  VALUES('${STORE}','${device_id}','products',v_base,v_base::TEXT)
+  VALUES('${STORE}','${DEVICE_ID}','products',v_base,v_base::TEXT)
   ON CONFLICT (store_id,device_id,table_name) DO UPDATE
     SET last_pull_seq=EXCLUDED.last_pull_seq,cursor_value=EXCLUDED.cursor_value;
   PERFORM public.log_change(
@@ -88,7 +85,7 @@ DO \$pull_first\$
 DECLARE p JSONB;
 BEGIN
   p := public.get_unsynced_records_page(
-    '${STORE}','${device_id}','products','${device_token}'
+    '${STORE}','${DEVICE_ID}','products','${DEVICE_TOKEN}'
   );
   IF (p->>'event_count')::INTEGER <> 1
      OR (p->>'has_more')::BOOLEAN IS NOT FALSE
@@ -102,9 +99,9 @@ SELECT pg_sleep(3);
 DO \$ack_first\$
 BEGIN
   IF NOT public.acknowledge_sync_cursor(
-      '${STORE}','${device_id}','products',
+      '${STORE}','${DEVICE_ID}','products',
       current_setting('atack_test.d32_r6_delivery')::UUID,
-      '${device_token}'
+      '${DEVICE_TOKEN}'
   ) THEN RAISE EXCEPTION 'First concurrent page ACK failed'; END IF;
 END
 \$ack_first\$;
@@ -147,7 +144,7 @@ DO \$pull_second\$
 DECLARE p JSONB;
 BEGIN
   p := public.get_unsynced_records_page(
-    '${STORE}','${device_id}','products','${device_token}'
+    '${STORE}','${DEVICE_ID}','products','${DEVICE_TOKEN}'
   );
   IF (p->>'event_count')::INTEGER <> 1
      OR (p->>'has_more')::BOOLEAN IS NOT FALSE
@@ -155,9 +152,9 @@ BEGIN
     RAISE EXCEPTION 'Concurrent event was lost or duplicated across page boundary: %',p;
   END IF;
   IF NOT public.acknowledge_sync_cursor(
-      '${STORE}','${device_id}','products',
+      '${STORE}','${DEVICE_ID}','products',
       (p->>'delivery_id')::UUID,
-      '${device_token}'
+      '${DEVICE_TOKEN}'
   ) THEN RAISE EXCEPTION 'Second concurrent page ACK failed'; END IF;
   RAISE NOTICE 'PASS: concurrent Change Log insert is delivered on the next page without a gap';
 END
