@@ -77,9 +77,6 @@ SELECT s.id, l.old_id, gen_random_uuid()::TEXT, l.location_name, l.was_default
 ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_location_id_fkey;
 ALTER TABLE public.stock_adjustments DROP CONSTRAINT IF EXISTS stock_adjustments_location_id_fkey;
 ALTER TABLE public.stock_movements DROP CONSTRAINT IF EXISTS stock_movements_location_id_fkey;
-ALTER TABLE public.stock DROP CONSTRAINT IF EXISTS stock_product_id_fkey;
-ALTER TABLE public.stock_movements DROP CONSTRAINT IF EXISTS stock_movements_product_id_fkey;
-ALTER TABLE public.stock_adjustments DROP CONSTRAINT IF EXISTS stock_adjustments_product_id_fkey;
 
 ALTER TABLE public.locations DROP CONSTRAINT IF EXISTS locations_pkey;
 ALTER TABLE public.locations DROP CONSTRAINT IF EXISTS locations_id_check;
