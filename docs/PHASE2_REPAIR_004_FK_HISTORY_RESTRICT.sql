@@ -33,7 +33,7 @@ INSERT INTO _stage2_fk_restrict_plan VALUES
 ('purchase_closure_items','purchase_closure_items_closure_id_fkey',ARRAY['closure_id'],'purchase_closures',ARRAY['id']),
 ('purchase_closure_items','fk_purchase_closure_items_closure_store',ARRAY['closure_id','store_id'],'purchase_closures',ARRAY['id','store_id']);
 
--- These nine lifecycle constraints are deliberately outside this business-history
+-- These ten lifecycle constraints are deliberately outside this business-history
 -- migration. Their continued CASCADE behavior is not authorization to purge a store/user.
 CREATE TEMP TABLE _stage2_fk_exclusions (
   source_table text NOT NULL,
@@ -51,7 +51,8 @@ INSERT INTO _stage2_fk_exclusions VALUES
 ('suppliers','suppliers_store_id_fkey','stores'),
 ('users','users_store_id_fkey','stores'),
 ('user_roles','user_roles_user_id_fkey','users'),
-('store_sync_counters','store_sync_counters_store_id_fkey','stores');
+('store_sync_counters','store_sync_counters_store_id_fkey','stores'),
+('locations','fk_locations_store','stores');
 
 -- Serialize DDL against concurrent writers. Stable alphabetical order reduces
 -- the chance of lock-order deadlocks with other maintenance operations.
@@ -134,8 +135,8 @@ BEGIN
 
   IF (SELECT count(*) FROM pg_constraint c
       JOIN pg_namespace n ON n.oid=c.connamespace
-      WHERE c.contype='f' AND n.nspname='public' AND c.confdeltype='c') <> 25 THEN
-    RAISE EXCEPTION 'Unexpected initial CASCADE FK inventory; expected 25';
+      WHERE c.contype='f' AND n.nspname='public' AND c.confdeltype='c') <> 26 THEN
+    RAISE EXCEPTION 'Unexpected initial CASCADE FK inventory; expected 26 (25 legacy plus store-scoped locations)';
   END IF;
 END;
 $stage2_fk_preflight$;
@@ -196,8 +197,8 @@ BEGIN
   IF v_count <> 16 THEN RAISE EXCEPTION 'Only % of 16 FKs were verified',v_count; END IF;
   IF (SELECT count(*) FROM pg_constraint c
       JOIN pg_namespace n ON n.oid=c.connamespace
-      WHERE c.contype='f' AND n.nspname='public' AND c.confdeltype='c') <> 9 THEN
-    RAISE EXCEPTION 'Postflight CASCADE count is not the approved nine exclusions';
+      WHERE c.contype='f' AND n.nspname='public' AND c.confdeltype='c') <> 10 THEN
+    RAISE EXCEPTION 'Postflight CASCADE count is not the approved ten lifecycle exclusions';
   END IF;
 END;
 $stage2_fk_postflight$;
