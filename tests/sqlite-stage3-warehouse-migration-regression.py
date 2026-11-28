@@ -122,6 +122,7 @@ except sqlite3.IntegrityError:
 
 # Negative balances are rejected without an authorized movement.
 store_a_main = db.execute("SELECT id FROM locations WHERE store_id=? AND code='main'", (uuid(1),)).fetchone()[0]
+db.execute("UPDATE locations SET is_active=1 WHERE id=? AND store_id=?", (store_a_main,uuid(1)))
 db.execute("UPDATE stock SET quantity=0,reserved_quantity=0 WHERE product_id=? AND store_id=?",
            (uuid(21),uuid(1)))
 try:
