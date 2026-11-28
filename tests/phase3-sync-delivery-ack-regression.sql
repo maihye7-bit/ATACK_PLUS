@@ -93,7 +93,6 @@ DECLARE
   v_delivery UUID;
   v_error TEXT;
   v_denied BOOLEAN;
-  v_ids UUID[] := ARRAY[]::UUID[];
   v_distinct INTEGER;
   v_expected INTEGER;
   v_cursor BIGINT;
