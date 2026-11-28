@@ -27,6 +27,7 @@ DECLARE
  v_total NUMERIC(18,4):=0; v_applied NUMERIC(18,4); v_new_credit NUMERIC(18,4);
  v_row JSONB; v_product UUID; v_item UUID; v_receipt_item UUID;
  v_qty NUMERIC(18,4); v_received NUMERIC(18,4); v_returned NUMERIC(18,4);
+ v_item_received_total NUMERIC(18,4); v_receipt_returned NUMERIC(18,4);
  v_unit TEXT; v_primary TEXT; v_factor NUMERIC(18,6);
  v_cost NUMERIC(18,4); v_price NUMERIC(18,4); v_line_qty NUMERIC(18,4); v_line_total NUMERIC(18,4);
  v_stock UUID; v_available NUMERIC(18,4); v_batch TEXT; v_expiry TIMESTAMPTZ;
@@ -65,8 +66,21 @@ BEGIN
      WHERE pri.id=v_receipt_item AND pr.purchase_id=v_purchase_id AND pr.store_id=p_store_id
      FOR UPDATE OF pri;
      IF NOT FOUND THEN RAISE EXCEPTION 'Receipt line not found in original purchase'; END IF;
-     SELECT COALESCE(SUM(quantity),0) INTO v_returned FROM public.purchase_return_items
-       WHERE purchase_receipt_item_id=v_receipt_item;
+     -- Lock/read the parent purchase line and count every return path against
+     -- its total accepted quantity, not only returns that carry this receipt ID.
+     SELECT pi.received_quantity+pi.excess_received_quantity
+       INTO v_item_received_total
+       FROM public.purchase_items pi
+      WHERE pi.id=v_item AND pi.purchase_id=v_purchase_id
+      FOR UPDATE;
+     IF NOT FOUND THEN RAISE EXCEPTION 'Receipt source purchase item not found'; END IF;
+     SELECT COALESCE(SUM(quantity),0) INTO v_returned
+       FROM public.purchase_return_items WHERE purchase_item_id=v_item;
+     SELECT COALESCE(SUM(quantity),0) INTO v_receipt_returned
+       FROM public.purchase_return_items WHERE purchase_receipt_item_id=v_receipt_item;
+     IF v_receipt_returned+v_qty>v_received THEN
+       RAISE EXCEPTION 'Purchase return exceeds accepted quantity on receipt line' USING ERRCODE='23514';
+     END IF;
    ELSE
      IF v_item IS NULL THEN
        SELECT pi.id INTO v_item FROM public.purchase_items pi
@@ -82,14 +96,23 @@ BEGIN
       INTO v_product,v_received,v_unit,v_cost,v_price,v_batch,v_expiry
       FROM public.purchase_items pi WHERE pi.id=v_item AND pi.purchase_id=v_purchase_id FOR UPDATE;
      IF NOT FOUND THEN RAISE EXCEPTION 'Purchase item not found in original purchase'; END IF;
-     SELECT COALESCE(SUM(quantity),0) INTO v_returned FROM public.purchase_return_items
-       WHERE purchase_item_id=v_item;
+     v_item_received_total:=v_received;
+     SELECT COALESCE(SUM(quantity),0) INTO v_returned
+       FROM public.purchase_return_items WHERE purchase_item_id=v_item;
    END IF;
    IF NULLIF(v_row->>'product_id','') IS NOT NULL AND (v_row->>'product_id')::UUID<>v_product THEN
      RAISE EXCEPTION 'Returned product must match the actual product received';
    END IF;
-   IF v_returned+v_qty>v_received THEN
-     RAISE EXCEPTION 'Purchase return exceeds accepted received quantity' USING ERRCODE='23514';
+   IF NULLIF(v_row->>'purchase_item_id','') IS NOT NULL
+      AND (v_row->>'purchase_item_id')::UUID IS DISTINCT FROM v_item THEN
+     RAISE EXCEPTION 'Receipt line does not match the supplied original purchase item';
+   END IF;
+   IF NULLIF(v_row->>'unit_id','') IS NOT NULL
+      AND v_row->>'unit_id' IS DISTINCT FROM v_unit THEN
+     RAISE EXCEPTION 'Purchase return unit must match the original receipt line';
+   END IF;
+   IF v_returned+v_qty>v_item_received_total THEN
+     RAISE EXCEPTION 'Purchase return exceeds total accepted quantity on original purchase item' USING ERRCODE='23514';
    END IF;
 
    SELECT p.primary_unit_id,
