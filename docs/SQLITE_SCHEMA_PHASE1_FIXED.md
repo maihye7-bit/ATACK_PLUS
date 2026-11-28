@@ -1322,7 +1322,7 @@ BEGIN
     VALUES ((SELECT store_id FROM products WHERE id = NEW.product_id),
             (SELECT COALESCE(MAX(cl.sync_cursor), 0) + 1 FROM change_log cl JOIN products p ON p.store_id = cl.store_id WHERE p.id = NEW.product_id),
             'stock_movements', NEW.id, 'INSERT', json_object(
-                'id', NEW.id, 'product_id', NEW.product_id, 'location_id', NEW.location_id,
+                'id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id,
                 'type', NEW.type, 'quantity', NEW.quantity, 'unit_id', NEW.unit_id,
                 'cost_per_unit', NEW.cost_per_unit, 'total_value', NEW.total_value,
                 'reference_id', NEW.reference_id, 'reference_type', NEW.reference_type,
@@ -1335,14 +1335,14 @@ END;
 
 CREATE TRIGGER trg_stock_movements_log_change_upd
 AFTER UPDATE ON stock_movements
-WHEN NEW.id IS NOT OLD.id OR NEW.product_id IS NOT OLD.product_id OR NEW.location_id IS NOT OLD.location_id OR NEW.type IS NOT OLD.type OR NEW.quantity IS NOT OLD.quantity OR NEW.unit_id IS NOT OLD.unit_id OR NEW.cost_per_unit IS NOT OLD.cost_per_unit OR NEW.total_value IS NOT OLD.total_value OR NEW.reference_id IS NOT OLD.reference_id OR NEW.reference_type IS NOT OLD.reference_type OR NEW.batch_number IS NOT OLD.batch_number OR NEW.expiry_date IS NOT OLD.expiry_date OR NEW.reason IS NOT OLD.reason OR NEW.user_id IS NOT OLD.user_id OR NEW.sync_status IS NOT OLD.sync_status OR NEW.synced_at IS NOT OLD.synced_at OR NEW.created_at IS NOT OLD.created_at
+WHEN NEW.id IS NOT OLD.id OR NEW.store_id IS NOT OLD.store_id OR NEW.product_id IS NOT OLD.product_id OR NEW.location_id IS NOT OLD.location_id OR NEW.type IS NOT OLD.type OR NEW.quantity IS NOT OLD.quantity OR NEW.unit_id IS NOT OLD.unit_id OR NEW.cost_per_unit IS NOT OLD.cost_per_unit OR NEW.total_value IS NOT OLD.total_value OR NEW.reference_id IS NOT OLD.reference_id OR NEW.reference_type IS NOT OLD.reference_type OR NEW.batch_number IS NOT OLD.batch_number OR NEW.expiry_date IS NOT OLD.expiry_date OR NEW.reason IS NOT OLD.reason OR NEW.user_id IS NOT OLD.user_id OR NEW.sync_status IS NOT OLD.sync_status OR NEW.synced_at IS NOT OLD.synced_at OR NEW.created_at IS NOT OLD.created_at
 BEGIN
     INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
     VALUES ((SELECT store_id FROM products WHERE id = NEW.product_id),
             (SELECT COALESCE(MAX(cl.sync_cursor), 0) + 1 FROM change_log cl JOIN products p ON p.store_id = cl.store_id WHERE p.id = NEW.product_id),
             'stock_movements', NEW.id, 'UPDATE',
             json_object(
-                'id', OLD.id, 'product_id', OLD.product_id, 'location_id', OLD.location_id,
+                'id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id,
                 'type', OLD.type, 'quantity', OLD.quantity, 'unit_id', OLD.unit_id,
                 'cost_per_unit', OLD.cost_per_unit, 'total_value', OLD.total_value,
                 'reference_id', OLD.reference_id, 'reference_type', OLD.reference_type,
@@ -1352,7 +1352,7 @@ BEGIN
                 'created_at', OLD.created_at
             ),
             json_object(
-                'id', NEW.id, 'product_id', NEW.product_id, 'location_id', NEW.location_id,
+                'id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id,
                 'type', NEW.type, 'quantity', NEW.quantity, 'unit_id', NEW.unit_id,
                 'cost_per_unit', NEW.cost_per_unit, 'total_value', NEW.total_value,
                 'reference_id', NEW.reference_id, 'reference_type', NEW.reference_type,
@@ -1371,7 +1371,7 @@ BEGIN
             (SELECT COALESCE(MAX(cl.sync_cursor), 0) + 1 FROM change_log cl JOIN products p ON p.store_id = cl.store_id WHERE p.id = OLD.product_id),
             'stock_movements', OLD.id, 'DELETE',
             json_object(
-                'id', OLD.id, 'product_id', OLD.product_id, 'location_id', OLD.location_id,
+                'id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id,
                 'type', OLD.type, 'quantity', OLD.quantity, 'unit_id', OLD.unit_id,
                 'cost_per_unit', OLD.cost_per_unit, 'total_value', OLD.total_value,
                 'reference_id', OLD.reference_id, 'reference_type', OLD.reference_type,
@@ -1411,22 +1411,22 @@ AFTER INSERT ON stock
 BEGIN
     INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
     VALUES ((SELECT store_id FROM products WHERE id = NEW.product_id), (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id = (SELECT store_id FROM products WHERE id = NEW.product_id)),
-            'stock', NEW.id, 'INSERT', NULL, json_object('id', NEW.id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated));
+            'stock', NEW.id, 'INSERT', NULL, json_object('id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated));
 END;
 CREATE TRIGGER trg_stock_log_update
 AFTER UPDATE ON stock
-WHEN NEW.id IS NOT OLD.id OR NEW.product_id IS NOT OLD.product_id OR NEW.location_id IS NOT OLD.location_id OR NEW.quantity IS NOT OLD.quantity OR NEW.reserved_quantity IS NOT OLD.reserved_quantity
+WHEN NEW.id IS NOT OLD.id OR NEW.store_id IS NOT OLD.store_id OR NEW.product_id IS NOT OLD.product_id OR NEW.location_id IS NOT OLD.location_id OR NEW.quantity IS NOT OLD.quantity OR NEW.reserved_quantity IS NOT OLD.reserved_quantity
 BEGIN
     INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
     VALUES ((SELECT store_id FROM products WHERE id = NEW.product_id), (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id = (SELECT store_id FROM products WHERE id = NEW.product_id)),
-            'stock', NEW.id, 'UPDATE', json_object('id', OLD.id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated), json_object('id', NEW.id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated));
+            'stock', NEW.id, 'UPDATE', json_object('id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated), json_object('id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated));
 END;
 CREATE TRIGGER trg_stock_log_delete
 AFTER DELETE ON stock
 BEGIN
     INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
     VALUES ((SELECT store_id FROM products WHERE id = OLD.product_id), (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id = (SELECT store_id FROM products WHERE id = OLD.product_id)),
-            'stock', OLD.id, 'DELETE', json_object('id', OLD.id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated), NULL);
+            'stock', OLD.id, 'DELETE', json_object('id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated), NULL);
 END;
 CREATE TRIGGER trg_purchases_log_insert
 AFTER INSERT ON purchases
