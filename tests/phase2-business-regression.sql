@@ -56,7 +56,7 @@ BEGIN
     );
 
     SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
-    SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_product AND location_id='main';
+    SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
     SELECT tax_total,total_amount INTO v_tax,v_total FROM public.purchases
       WHERE id='70000000-0000-4000-8000-000000000002';
 
@@ -124,7 +124,7 @@ BEGIN
           'quantity',10,'received_quantity',4,'unit_id','pcs','unit_price',30,
           'cost_per_unit',30)))
     );
-    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
     SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
     SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
     SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
@@ -152,7 +152,7 @@ BEGIN
     );
     IF (v_result->>'replayed')::boolean IS DISTINCT FROM TRUE THEN RAISE EXCEPTION 'Receipt retry was not idempotent'; END IF;
 
-    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
     IF v_qty IS DISTINCT FROM 17 THEN RAISE EXCEPTION 'Receipt replay duplicated stock or receipt stock mismatch: %',v_qty; END IF;
     IF NOT EXISTS(SELECT 1 FROM public.purchase_receipt_items
        WHERE receipt_id='72000000-0000-4000-8000-000000000003'
@@ -170,7 +170,7 @@ BEGIN
         'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,
           'product_id',v_product,'quantity',1,'unit_id','pcs')))
     );
-    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
     SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
     IF v_qty IS DISTINCT FROM 16 OR v_cost IS DISTINCT FROM 17.5000 OR
        (SELECT received_quantity FROM public.purchase_items WHERE id=v_item) IS DISTINCT FROM 7 THEN
@@ -198,7 +198,7 @@ BEGIN
       jsonb_build_object('id','72000000-0000-4000-8000-000000000005','purchase_id',v_purchase,
         'items',jsonb_build_array(jsonb_build_object('purchase_item_id',v_item,'quantity',3)))
     );
-    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+    SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
     SELECT received_quantity INTO v_received FROM public.purchase_items WHERE id=v_item;
     SELECT receiving_status INTO v_status FROM public.purchases WHERE id=v_purchase;
     SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
@@ -278,7 +278,7 @@ BEGIN
     IF (v_result->>'replayed')::boolean IS DISTINCT FROM TRUE THEN
       RAISE EXCEPTION 'Sale return retry was not idempotent';
     END IF;
-    SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_sale_product AND location_id='main';
+    SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_sale_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
     IF v_stock IS DISTINCT FROM 19 THEN RAISE EXCEPTION 'Sale return stock mismatch: %',v_stock; END IF;
 
     -- A second return of the already-returned sold quantity must be rejected.
@@ -309,7 +309,7 @@ BEGIN
     SELECT total_amount INTO v_total FROM public.purchase_returns
       WHERE id='92000000-0000-4000-8000-000000000001';
     SELECT quantity INTO v_stock FROM public.stock
-      WHERE product_id=v_purchase_product AND location_id='main';
+      WHERE product_id=v_purchase_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
     SELECT current_debt,credit_balance INTO v_debt,v_credit
       FROM public.suppliers WHERE id=v_supplier;
     SELECT cost_price INTO v_cost FROM public.products WHERE id=v_purchase_product;
@@ -376,7 +376,7 @@ BEGIN
    'purchase_id','70000000-0000-4000-8000-000000000004','approved_by',v_user,
    'items',jsonb_build_array(jsonb_build_object('purchase_item_id','71000000-0000-4000-8000-000000000004',
     'accepted_quantity',5,'excess_quantity',2,'excess_reason','Supplier delivered extra units'))));
- SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_excess_product AND location_id='main';
+ SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_excess_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  SELECT received_quantity,excess_received_quantity INTO v_received,v_excess
   FROM public.purchase_items WHERE id='71000000-0000-4000-8000-000000000004';
  SELECT total_amount INTO v_total FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000004';
@@ -399,7 +399,7 @@ BEGIN
    'purchase_id','70000000-0000-4000-8000-000000000005','reason','Supplier discontinued remaining units',
    'items',jsonb_build_array(jsonb_build_object('purchase_item_id','71000000-0000-4000-8000-000000000005',
     'quantity',3))));
- SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_close_product AND location_id='main';
+ SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_close_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  SELECT closed_quantity INTO v_closed FROM public.purchase_items WHERE id='71000000-0000-4000-8000-000000000005';
  SELECT receiving_status INTO v_status FROM public.purchases WHERE id='70000000-0000-4000-8000-000000000005';
  IF v_stock IS DISTINCT FROM 2 OR v_closed IS DISTINCT FROM 3 OR v_status IS DISTINCT FROM 'CLOSED_PARTIAL'
@@ -437,7 +437,7 @@ BEGIN
    'return_number','PH2-PRET-SUB','items',jsonb_build_array(jsonb_build_object(
     'purchase_receipt_item_id',v_receipt_item,'product_id',v_substitute_product,
     'quantity',1,'unit_id','pcs'))));
- SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_substitute_product AND location_id='main';
+ SELECT quantity INTO v_stock FROM public.stock WHERE product_id=v_substitute_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  SELECT total_amount INTO v_total FROM public.purchase_returns WHERE id='92000000-0000-4000-8000-000000000004';
  IF v_stock IS DISTINCT FROM 2 OR v_total IS DISTINCT FROM 15 THEN
    RAISE EXCEPTION 'Substitute purchase return mismatch: substitute stock %, return total %',v_stock,v_total;
@@ -538,7 +538,7 @@ BEGIN
   jsonb_build_object('id','76000000-0000-4000-8000-000000000008',
    'adjustment_number','ADJ-PH2-001','product_id',v_product,'adjustment_type','INCREASE',
    'reason','Initial count correction','quantity',2,'unit_id','pcs','cost_per_unit',20));
- SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  SELECT cost_price INTO v_cost FROM public.products WHERE id=v_product;
  SELECT id,total_debit,total_credit INTO v_journal,v_debit,v_credit
   FROM public.journal_entries WHERE source_id='76000000-0000-4000-8000-000000000008';
@@ -560,7 +560,7 @@ BEGIN
   jsonb_build_object('id','76000000-0000-4000-8000-000000000009',
    'adjustment_number','ADJ-PH2-002','product_id',v_product,'adjustment_type','DECREASE',
    'reason','Damaged stock write-off','quantity',3,'unit_id','pcs','cost_per_unit',999));
- SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  SELECT total_value INTO v_total FROM public.stock_adjustments WHERE id='76000000-0000-4000-8000-000000000009';
  SELECT id,total_debit,total_credit INTO v_journal,v_debit,v_credit
   FROM public.journal_entries WHERE source_id='76000000-0000-4000-8000-000000000009';
@@ -598,7 +598,7 @@ BEGIN
   RAISE EXCEPTION 'Unauthorized negative stock adjustment unexpectedly succeeded';
  EXCEPTION WHEN insufficient_privilege THEN NULL;
  END;
- SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  IF v_qty IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'Denied negative adjustment changed stock: %',v_qty; END IF;
 
  -- Only the owner has inventory.adjust and inventory.allow_negative; the exception is audited.
@@ -607,7 +607,7 @@ BEGIN
   jsonb_build_object('id','76000000-0000-4000-8000-000000000011',
    'adjustment_number','ADJ-PH2-004','product_id',v_product,'adjustment_type','DECREASE',
    'reason','Approved negative stock test','quantity',6,'unit_id','pcs'));
- SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id='main';
+ SELECT quantity INTO v_qty FROM public.stock WHERE product_id=v_product AND location_id=(SELECT id FROM public.locations WHERE store_id=v_store AND code='main');
  IF v_qty IS DISTINCT FROM -2 OR NOT EXISTS(SELECT 1 FROM public.audit_logs
     WHERE entity_id='76000000-0000-4000-8000-000000000011' AND action='UPDATE'
       AND new_values_json->>'event'='NEGATIVE_STOCK') THEN
