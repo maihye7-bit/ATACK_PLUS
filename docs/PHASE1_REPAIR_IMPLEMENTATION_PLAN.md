@@ -194,6 +194,16 @@ Tests:
 - CI: SQL [46154120813](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46154120813) PASS; Supabase Auth [46154120793](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46154120793) PASS on `42c037a3e014008bd1a388d4c4ffbab71bad486c`.
 - Offline Flutter transaction ordering (movement first, then balance update), restart recovery, and UI permission handling remain unverified because no Flutter source is present. No persistent database was modified; no merge to `main`.
 
+### 7.3 Part C0 — business-return source and aggregate guard (implemented; CI-verified)
+
+- Re-audited the effective migration order, including `ATACK_PLUS_BUSINESS_RETURNS_REPAIR.sql`, `ATACK_PLUS_PURCHASE_RETURN_RECEIPT_LINK.sql`, and the accounting wrapper. The original Phase 3 return functions are superseded by these later repairs; the audit did not treat the older function bodies as the effective runtime contract.
+- Confirmed sales returns are bound to an original invoice item, capped against the sold quantity, valued from the original invoice line, and settled as customer debt reduction/customer credit rather than an automatic cash payout.
+- Found a purchase-return overrun path: a return made through the `purchase_item_id` compatibility path was counted against the purchase line, while a later receipt-specific return was counted only against its own receipt line. The combined returns could exceed the total accepted quantity on the original purchase line.
+- Updated `ATACK_PLUS_PURCHASE_RETURN_RECEIPT_LINK.sql` to count all return quantities by the original purchase item across both receipt-specific and compatibility paths, while also enforcing the per-receipt-line accepted quantity. The RPC now also rejects mismatched supplied purchase-item and unit identities.
+- Added `tests/phase3-purchase-return-source-regression.sql` and included it in SQL CI. It creates a purchase line split across two receipt rows, performs a compatibility-path return, proves a later receipt-specific over-return is rejected atomically, verifies no residual return or stock movement, and confirms automatic cash refunds remain disabled.
+- **CI on commit `a7892b32447c3f36950b09359909b1ad4cb98d8a`:** SQL Migration Smoke Test [run 46157779408](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46157779408) PASS; Supabase Auth Integration [run 46157779426](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46157779426) PASS.
+- No persistent database was modified and no merge to `main` was performed. SQLite return-line parity and Flutter client replay/restart acceptance remain open; this subsection closes only the server-side PostgreSQL return-source aggregate defect.
+
 ## 8. Stage 4 — Device lifecycle and cursor integrity
 
 **Findings:** F-06, F-07.  
