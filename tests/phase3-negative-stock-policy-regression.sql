@@ -97,8 +97,8 @@ BEGIN
     BEGIN
         PERFORM public.process_sale_invoice(v_store,
             'a3000000-0000-4000-8000-000000000095'::UUID,
-            v_payload || jsonb_build_object('id','a3000000-0000-4000-8000-000000000096',
-                'invoice_number','D016-NEG-NOREASON') - 'reason');
+            (v_payload - 'reason') || jsonb_build_object('id','a3000000-0000-4000-8000-000000000096',
+                'invoice_number','D016-NEG-NOREASON'));
     EXCEPTION WHEN OTHERS THEN v_rejected:=TRUE;
     END;
     IF NOT v_rejected THEN RAISE EXCEPTION 'Negative sale without reason was accepted'; END IF;
@@ -108,8 +108,8 @@ BEGIN
     BEGIN
         PERFORM public.process_sale_invoice(v_store,
             'a3000000-0000-4000-8000-000000000097'::UUID,
-            v_payload || jsonb_build_object('id','a3000000-0000-4000-8000-000000000098',
-                'invoice_number','D016-NEG-NODEVICE') - 'device_id' - 'device_token');
+            (v_payload - 'device_id' - 'device_token') || jsonb_build_object('id','a3000000-0000-4000-8000-000000000098',
+                'invoice_number','D016-NEG-NODEVICE'));
     EXCEPTION WHEN OTHERS THEN v_rejected:=TRUE;
     END;
     IF NOT v_rejected THEN RAISE EXCEPTION 'Negative sale without device credential was accepted'; END IF;
