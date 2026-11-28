@@ -194,6 +194,10 @@ BEGIN
         SELECT p.store_id INTO v_parent_store
           FROM public.purchases p
          WHERE p.id = NULLIF(p_record_json->>'purchase_id', '')::UUID;
+    ELSIF p_table_name IN ('supplier_ledger', 'supplier_payments') THEN
+        SELECT s.store_id INTO v_parent_store
+          FROM public.suppliers s
+         WHERE s.id = NULLIF(p_record_json->>'supplier_id', '')::UUID;
     ELSIF p_table_name = 'purchase_return_items' THEN
         SELECT pr.store_id INTO v_parent_store
           FROM public.purchase_returns pr
