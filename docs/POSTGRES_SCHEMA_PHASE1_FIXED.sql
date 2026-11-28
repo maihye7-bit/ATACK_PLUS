@@ -1190,9 +1190,9 @@ BEGIN
         SELECT store_id INTO v_store_id FROM suppliers WHERE id=(v_row->>'supplier_id')::UUID;
     ELSIF v_row ? 'original_invoice_id' THEN
         SELECT store_id INTO v_store_id FROM invoices WHERE id=(v_row->>'original_invoice_id')::UUID;
-    ELSIF v_row ? 'return_id' THEN
-        SELECT i.store_id INTO v_store_id FROM sales_returns r JOIN invoices i ON i.id=r.original_invoice_id
-        WHERE r.id=(v_row->>'return_id')::UUID;
+    ELSIF TG_TABLE_NAME = 'return_items' AND v_row ? 'return_id' THEN
+        SELECT store_id INTO v_store_id FROM sales_returns
+        WHERE id=(v_row->>'return_id')::UUID;
     ELSIF v_row ? 'product_id' THEN
         SELECT store_id INTO v_store_id FROM products WHERE id=(v_row->>'product_id')::UUID;
     ELSE
@@ -1200,10 +1200,8 @@ BEGIN
     END IF;
 
     IF v_store_id IS NULL THEN
-        IF TG_OP = 'DELETE' THEN
-            -- Cascaded child delete after its parent has disappeared; parent DELETE is logged.
-            RETURN OLD;
-        END IF;
+        -- Never allow a DELETE to commit without its own Change Log event.
+        -- If ownership cannot be resolved, fail the statement and roll back atomically.
         RAISE EXCEPTION 'Cannot resolve store for change-log row in %',TG_TABLE_NAME;
     END IF;
     v_record_id := (v_row->>'id')::UUID;
