@@ -27,7 +27,7 @@ CREATE TABLE stock(
 CREATE TABLE stock_movements(
   id TEXT PRIMARY KEY,product_id TEXT NOT NULL,location_id TEXT NOT NULL DEFAULT 'main',
   type TEXT NOT NULL,quantity NUMERIC NOT NULL,unit_id TEXT NOT NULL,
-  cost_per_unit NUMERIC NOT NULL,total_value NUMERIC NOT NULL,user_id TEXT NOT NULL,created_at TEXT DEFAULT (datetime('now')),
+  cost_per_unit NUMERIC NOT NULL,total_value NUMERIC NOT NULL,reference_id TEXT,reference_type TEXT,user_id TEXT NOT NULL,created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY(product_id) REFERENCES products(id),
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
