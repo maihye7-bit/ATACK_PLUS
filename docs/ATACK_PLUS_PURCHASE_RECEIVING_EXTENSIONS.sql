@@ -205,13 +205,13 @@ DECLARE
  v_purchase_delta NUMERIC(18,4):=0; v_debt_reduction NUMERIC(18,4):=0; v_credit_increase NUMERIC(18,4):=0;
  v_approver UUID; v_batch TEXT; v_expiry TIMESTAMPTZ;
 BEGIN
- IF v_location NOT IN ('main','warehouse','storage') THEN RAISE EXCEPTION 'Invalid stock location'; END IF;
  IF COALESCE(jsonb_typeof(p_payload->'items'),'')<>'array' OR jsonb_array_length(p_payload->'items')=0 THEN
    RAISE EXCEPTION 'Receipt items must be a non-empty JSON array';
  END IF;
  SELECT c.app_user_id,c.already_processed INTO v_user,v_replay
   FROM public._claim_business_operation(p_store_id,p_operation_id,'purchase_receipt',v_receipt,p_payload,'purchases.receive') c;
  IF v_replay THEN RETURN jsonb_build_object('success',TRUE,'replayed',TRUE,'receipt_id',v_receipt); END IF;
+ v_location := public.resolve_store_location_id(p_store_id,v_location);
  SELECT purchase_number,supplier_id INTO v_number,v_supplier FROM public.purchases
   WHERE id=v_purchase AND store_id=p_store_id AND status<>'CANCELLED' FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'Purchase not found or cancelled'; END IF;
