@@ -60,21 +60,18 @@ BEGIN
   ON CONFLICT (store_id,device_id,table_name) DO UPDATE
     SET last_pull_seq=EXCLUDED.last_pull_seq,cursor_value=EXCLUDED.cursor_value;
 
-  WITH ids AS (
-    SELECT gen_random_uuid() AS id FROM generate_series(1,1201)
-  )
   PERFORM public.log_change(
-      v_store,'products,ids.id,'UPDATE',NULL,
+      v_store, 'products', ids.id, 'UPDATE', NULL,
       jsonb_build_object('id',ids.id,'store_id',v_store,'name','D3.2 R3 visible fixture')
-  ) FROM ids;
-
-  WITH ids AS (
-    SELECT gen_random_uuid() AS id FROM generate_series(1,601)
   )
+  FROM (SELECT gen_random_uuid() AS id FROM generate_series(1,1201)) ids;
+
   PERFORM public.log_change(
-      v_store,'purchases,ids.id,'INSERT',NULL,
+      v_store, 'purchases', ids.id, 'INSERT', NULL,
       jsonb_build_object('id',ids.id,'store_id',v_store,'purchase_number','D3.2 R3 hidden fixture')
-  ) FROM ids;
+  )
+  FROM (SELECT gen_random_uuid() AS id FROM generate_series(1,601)) ids;
+
 END
 $seed_pages$;
 
