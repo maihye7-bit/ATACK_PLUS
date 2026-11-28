@@ -265,3 +265,9 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-fk-cascade-remediation-regression.sql"
+
+      # Stage 2 / Part 3-D3.1: Change Log ownership and atomic child-delete coverage.
+      - name: Run Stage 2 Change Log child-delete regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase2-change-log-child-delete-regression.sql"
