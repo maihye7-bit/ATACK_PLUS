@@ -497,6 +497,7 @@ DECLARE
     v_available_qty NUMERIC(18,4);
     v_customer_id UUID;
     v_customer_debt NUMERIC(18,4);
+    v_location TEXT := COALESCE(NULLIF(p_payload->>'location_id',''),'main');
 BEGIN
     -- Authentication and authorization
     SELECT u.id INTO v_user FROM public.users u
@@ -519,6 +520,7 @@ BEGIN
     IF v_replay THEN
         RETURN jsonb_build_object('success', TRUE, 'replayed', TRUE, 'return_id', v_return_id);
     END IF;
+    v_location := public.resolve_store_location_id(p_store_id,v_location);
 
     -- Validate original invoice exists and belongs to store
     IF v_invoice_id IS NULL THEN
@@ -575,7 +577,9 @@ BEGIN
         v_line_total := COALESCE(NULLIF(v_item->>'unit_price','')::NUMERIC, 0) * v_line_qty;
 
         -- Check available inventory (from original sale)
-        SELECT COALESCE((SELECT quantity FROM stock s WHERE s.product_id = v_product_id), 0) INTO v_available_qty;
+        SELECT COALESCE((SELECT quantity-reserved_quantity FROM stock s
+                         WHERE s.product_id = v_product_id AND s.location_id = v_location), 0)
+          INTO v_available_qty;
 
         IF v_return_condition = 'DEFECTIVE' OR v_return_condition = 'UNSALEABLE' THEN
             -- For defective/unusable items, we just record the return, no stock restoration
@@ -598,8 +602,12 @@ BEGIN
 
         -- Only add stock back if items are good condition
         IF v_return_condition = 'GOOD' THEN
+            INSERT INTO stock(product_id,location_id,quantity,reserved_quantity)
+            VALUES(v_product_id,v_location,0,0)
+            ON CONFLICT(product_id,location_id) DO NOTHING;
             SELECT s.id INTO v_stock_id FROM stock s
-            WHERE s.product_id = v_product_id AND s.location_id = 'main';
+            WHERE s.product_id = v_product_id AND s.location_id = v_location
+            FOR UPDATE;
 
             -- Create stock movement for return
             INSERT INTO stock_movements(
@@ -607,7 +615,7 @@ BEGIN
                 cost_per_unit, total_value, reference_id, reference_type,
                 batch_number, expiry_date, reason, user_id
             ) VALUES(
-                v_product_id, 'main', 'RETURN_IN', v_line_qty, v_unit,
+                v_product_id, v_location, 'RETURN_IN', v_line_qty, v_unit,
                 COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC, 0),
                 v_line_qty * COALESCE(NULLIF(v_item->>'cost_per_unit','')::NUMERIC, 0),
                 v_return_id, 'return',
