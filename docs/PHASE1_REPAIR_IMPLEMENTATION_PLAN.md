@@ -121,6 +121,13 @@ Tasks:
 - This is a safety restriction, not a claim that all entity-specific deletion/retention and cascade requirements in Stage 2 are complete.
 - Test parent/nested cascades and actual `trg_log_change` behavior.
 
+**Stage 2 retention matrix (business policy):**
+- Categories, brands, products, customers and suppliers: deactivate/soft-delete through the approved RPC; no normal physical deletion and no restore until a separate approved workflow.
+- Invoices, purchases, payments, sales/purchase returns, customer/supplier ledgers, stock movements, journal entries and general-ledger rows: preserve as business history; use cancel/void/reversal or correcting business operations, never physical deletion through normal application roles.
+- Detail/association rows (invoice items, purchase items, payment allocations, return items, receipt/closure items): retain with their business parent. Draft-only cleanup is permitted only through a separately authorized transactional workflow that proves no financial, stock, audit or sync side effects; FK RESTRICT is the database backstop.
+- Audit, Change Log, Outbox, Tombstone, delivery and cursor records: operational evidence; no application hard-delete path. Any exceptional purge is a separate maintenance process with retention basis, dependency checks, backup/restore proof and audit.
+- Store/user/device lifecycle records are a separate administrative lifecycle; their remaining CASCADE constraints are not authorization for routine deletion of business history.
+
 Tests:
 - Soft-delete products with no history and with stock/purchase/invoice/return/movement history.
 - Physical delete attempts through app roles must fail.
@@ -1188,3 +1195,32 @@ The new real-JWT test verifies:
 The repository still has no Flutter application source. These client requirements remain explicit future acceptance gates; they are not reported as passed.
 
 No staging or production migration was run, no physical purge/restore was added, no merge to `main` occurred, and no application release was performed.
+
+
+### 19.18 Stage 2 — SQLite history retention parity and delete-denial regression
+
+**Status:** SQLite schema contract and CI regression added on `repair/verified-fixes`; existing-device migration and client acceptance remain open.
+
+#### A. SQLite schema parity
+
+Aligned the SQLite source schema with the approved PostgreSQL history-retention policy:
+- Changed the 10 corresponding Phase 1 child relationships to `ON DELETE RESTRICT`: product units, stock, payment allocations (invoice and payment), purchase items (purchase and product), supplier ledger, supplier payments, invoice items and sales-return items.
+- Changed both Phase 3 purchase-return-item relationships (return parent and product) to `ON DELETE RESTRICT`.
+- Updated the SQLite FK summary to match the executable DDL.
+- Changed SQLite Tombstone uniqueness to the approved logical identity `(store_id, table_name, record_uuid)`.
+- Preserved store/user lifecycle CASCADE relationships; they are explicitly outside the business-history FK conversion.
+
+The SQLite Phase 1/3 schema has no purchase-receipt or purchase-closure detail tables, so those PostgreSQL relationships have no local equivalent in these SQLite files.
+
+#### B. Regression coverage
+
+Added `tests/sqlite-stage2-history-retention-regression.py` and a SQL Migration Smoke workflow step. It checks all 12 SQLite business-history FK declarations, exercises SQLite RESTRICT behavior for each relationship, verifies the explicitly retained lifecycle cascades, and tests store-scoped Tombstone identity.
+
+Extended `tests/phase3-security-catalog-regression.sql` so the direct-write denial matrix also includes categories, brands, products, customers and suppliers and asserts their restrictive DELETE-denial policies. Extended `tests/phase3-security-regression.sql` with an authenticated direct DELETE denial check against a visible accounting row.
+
+#### C. Deployment and acceptance boundary
+
+- These edits update the SQLite schema/migration source for newly created databases. They do **not** rebuild tables in an already-created SQLite database; SQLite requires a versioned table-rebuild migration that preserves every index and trigger. That upgrade migration must be implemented and exercised with the actual Flutter database-opening/versioning path before existing local databases can be declared migrated.
+- The repository still has no Flutter source. Local transaction ordering, Tombstone replay against stale UPDATEs, restart behavior and ACK-after-local-commit therefore remain untested.
+- PostgreSQL direct-delete protections are enforced through the later hardening migrations and catalog/role tests; the updated regression is intended to verify that final migration state, not the base schema in isolation.
+- Stage 2 G2 remains open until the SQLite upgrade path and client replay acceptance are proven and the complete migration/test gate passes. No persistent SQLite/PostgreSQL database was modified and no merge to `main` was performed.
