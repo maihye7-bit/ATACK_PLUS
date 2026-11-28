@@ -228,23 +228,51 @@ BEGIN
 END;
 $resolve_location$;
 
--- Store ownership is also enforced for stock adjustment rows.
-CREATE OR REPLACE FUNCTION public.validate_stock_adjustment_location_store()
+-- Resolve legacy location codes at the database boundary and derive store
+-- ownership from the product. Callers cannot assign stock to another store.
+CREATE OR REPLACE FUNCTION public.resolve_inventory_row_location()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path=pg_catalog,public,pg_temp
-AS $adjustment_location$
+AS $inventory_location$
+DECLARE
+    v_product_store UUID;
 BEGIN
-    NEW.location_id := public.resolve_store_location_id(NEW.store_id,NEW.location_id);
+    SELECT p.store_id INTO v_product_store
+      FROM public.products p WHERE p.id=NEW.product_id FOR SHARE;
+    IF v_product_store IS NULL THEN
+        RAISE EXCEPTION 'Inventory product does not exist';
+    END IF;
+    IF TG_TABLE_NAME='stock_adjustments' THEN
+        IF NEW.store_id IS DISTINCT FROM v_product_store THEN
+            RAISE EXCEPTION 'Stock adjustment product belongs to another store' USING ERRCODE='23514';
+        END IF;
+    ELSE
+        IF NEW.store_id IS NOT NULL AND NEW.store_id IS DISTINCT FROM v_product_store THEN
+            RAISE EXCEPTION 'Inventory row product belongs to another store' USING ERRCODE='23514';
+        END IF;
+        NEW.store_id := v_product_store;
+    END IF;
+    NEW.location_id := public.resolve_store_location_id(v_product_store,NEW.location_id);
     RETURN NEW;
 END;
-$adjustment_location$;
+$inventory_location$;
+
+DROP TRIGGER IF EXISTS trg_stock_resolve_location ON public.stock;
+CREATE TRIGGER trg_stock_resolve_location
+BEFORE INSERT OR UPDATE OF product_id,store_id,location_id ON public.stock
+FOR EACH ROW EXECUTE FUNCTION public.resolve_inventory_row_location();
+
+DROP TRIGGER IF EXISTS trg_stock_movements_resolve_location ON public.stock_movements;
+CREATE TRIGGER trg_stock_movements_resolve_location
+BEFORE INSERT OR UPDATE OF product_id,store_id,location_id ON public.stock_movements
+FOR EACH ROW EXECUTE FUNCTION public.resolve_inventory_row_location();
 
 DROP TRIGGER IF EXISTS trg_stock_adjustments_resolve_location ON public.stock_adjustments;
 CREATE TRIGGER trg_stock_adjustments_resolve_location
-BEFORE INSERT OR UPDATE OF store_id,location_id ON public.stock_adjustments
-FOR EACH ROW EXECUTE FUNCTION public.validate_stock_adjustment_location_store();
+BEFORE INSERT OR UPDATE OF product_id,store_id,location_id ON public.stock_adjustments
+FOR EACH ROW EXECUTE FUNCTION public.resolve_inventory_row_location();
 
 -- Warehouse records are first-class store-scoped sync entities.
 DROP TRIGGER IF EXISTS trg_locations_log_change ON public.locations;
@@ -335,7 +363,7 @@ $deactivate_location$;
 
 REVOKE ALL ON FUNCTION public.resolve_store_location_id(UUID,TEXT) FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.create_default_store_locations() FROM PUBLIC,anon,authenticated;
-REVOKE ALL ON FUNCTION public.validate_stock_adjustment_location_store() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.resolve_inventory_row_location() FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.create_store_location(UUID,TEXT,TEXT,BOOLEAN) FROM PUBLIC,anon;
 REVOKE ALL ON FUNCTION public.deactivate_store_location(UUID,TEXT) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.create_store_location(UUID,TEXT,TEXT,BOOLEAN) TO authenticated;
