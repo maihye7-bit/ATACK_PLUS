@@ -986,3 +986,43 @@ Added `tests/phase3-device-credential-regression.sql` and CI steps after R1. The
 - This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No local, staging or production database was touched; no merge to `main` was performed.
+
+
+### 19.13 D3.2 / R3 — server-issued delivery pages and delivery-bound ACK
+
+**Status:** Implemented on `repair/verified-fixes`; disposable PostgreSQL CI validation is pending. No persistent database has been modified.
+
+#### A. Delivery contract
+
+The R2 credential-bearing Pull/ACK overloads still allowed an authenticated device to ACK a cursor that existed in Change Log without proving that the server had issued that page to that device. R3 replaces those authenticated paths with a page ledger.
+
+Added `docs/PHASE3_REPAIR_007_SYNC_DELIVERY_ACK.sql`:
+- Adds private `sync_delivery_pages`, binding a page to store, device, table, cursor range, event count, has-more state, page hash and device credential version.
+- Adds `get_unsynced_records_page(store_id, device_id, table_name, device_token)`, returning a server-issued `delivery_id`, authorized events, visible event count and `has_more`.
+- Adds delivery-bound `acknowledge_sync_cursor(store_id, device_id, table_name, delivery_id, device_token)`. The client no longer supplies an arbitrary cursor.
+- Requires pages to be acknowledged in order; duplicate ACK of the same page is idempotent.
+- A page retry before ACK returns the same delivery identity when its contents and metadata have not changed.
+- Rejects delivery IDs belonging to another device, store or table, and rejects delivery pages issued under a previous credential version.
+- Revokes authenticated access to the older cursor-only and credential-only Pull/ACK signatures; trusted service-role paths remain available.
+- Computes `has_more` only over events visible to the caller. If a table has no visible events, the server advances the device's checkpoint across the invisible range internally and returns an empty response without exposing hidden event counts, identities, cursor values or a delivery ID.
+
+The page contract deliberately does not expose internal cursor numbers to the client. The server stores and advances the per-device/table cursor after a valid delivery ACK.
+
+#### B. Client-side boundary
+
+A Delivery ID proves that the server issued a particular page to the registered device; it does not prove that the client committed the page to local storage. The future client must apply the page atomically, persist the Delivery ID with the local transaction, and ACK only after successful commit. This remains a client acceptance requirement because no Flutter source is present in the repository.
+
+#### C. Regression and CI
+
+Added `tests/phase3-sync-delivery-ack-regression.sql` and appended R3 migration/test steps to `.github/workflows/sql-migrations-smoke.yml`. Coverage includes:
+- ACK with a fabricated/undelivered page ID is rejected.
+- A different device cannot ACK another device's page.
+- Retry of an unacknowledged page returns the same delivery ID and page hash.
+- Duplicate ACK is idempotent.
+- 1,201 visible events are delivered in sequential 500/500/201 pages without gaps or duplicates.
+- Hidden purchase events are not returned and do not leak `has_more`, counts, cursor values or delivery IDs; the invisible range is checkpointed safely.
+- Direct access to the private delivery ledger is denied.
+
+**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+
+No local, staging or production database was touched; no merge to `main` was performed.
