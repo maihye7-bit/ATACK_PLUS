@@ -51,6 +51,7 @@ jobs:
           apply_sql docs/ATACK_PLUS_PURCHASE_RETURN_RECEIPT_LINK.sql
           apply_sql docs/ATACK_PLUS_STOCK_ADJUSTMENT_REPAIR.sql
           apply_sql docs/PHASE3_REPAIR_010_STORE_SCOPED_WAREHOUSES.sql
+          apply_sql docs/PHASE3_REPAIR_011_NEGATIVE_STOCK_AUDIT.sql
           apply_sql docs/ATACK_PLUS_BUSINESS_OPERATION_LOCK_ORDER_REPAIR.sql
           apply_sql docs/ATACK_PLUS_PHASE3_SECURITY_HARDENING.sql
           apply_sql docs/ATACK_PLUS_PHASE3_ACCOUNTING_HARDENING.sql
