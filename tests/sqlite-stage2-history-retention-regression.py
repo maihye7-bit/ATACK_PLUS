@@ -10,7 +10,7 @@ PHASE3 = (ROOT / "docs/SQLITE_MIGRATION_PHASE3.sql").read_text(encoding="utf-8")
 
 def table_ddl(source: str, table: str) -> str:
     match = re.search(
-        rf"CREATE TABLE(?: IF NOT EXISTS)?\\s+{re.escape(table)}\\s*\\((.*?)\\n\\);",
+        rf"CREATE TABLE(?: IF NOT EXISTS)?\s+{re.escape(table)}\s*\((.*?)\n\);",
         source,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -22,7 +22,7 @@ def foreign_keys(source: str, table: str):
     ddl = table_ddl(source, table)
     found = {}
     for match in re.finditer(
-        r"FOREIGN KEY\\s*\\(([^)]+)\\)\\s*REFERENCES\\s+(\\w+)\\s*\\(([^)]+)\\)(?:\\s+ON DELETE\\s+(\\w+))?",
+        r"FOREIGN KEY\s*\(([^)]+)\)\s*REFERENCES\s+(\w+)\s*\(([^)]+)\)(?:\s+ON DELETE\s+(\w+))?",
         ddl,
         flags=re.IGNORECASE,
     ):
@@ -87,12 +87,12 @@ for child, parent in [
 
 tombstone_ddl = table_ddl(SCHEMA, "tombstones")
 assert re.search(
-    r"UNIQUE\\s*\\(\\s*store_id\\s*,\\s*table_name\\s*,\\s*record_uuid\\s*\\)",
+    r"UNIQUE\s*\(\s*store_id\s*,\s*table_name\s*,\s*record_uuid\s*\)",
     tombstone_ddl,
     flags=re.IGNORECASE,
 ), "Tombstone uniqueness must be (store_id, table_name, record_uuid)"
 assert not re.search(
-    r"UNIQUE\\s*\\(\\s*table_name\\s*,\\s*record_uuid\\s*\\)",
+    r"UNIQUE\s*\(\s*table_name\s*,\s*record_uuid\s*\)",
     tombstone_ddl,
     flags=re.IGNORECASE,
 ), "Legacy store-agnostic Tombstone uniqueness remains"
