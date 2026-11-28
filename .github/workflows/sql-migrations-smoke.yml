@@ -240,6 +240,10 @@ jobs:
       - name: Run SQLite Stage 2 history-retention regression
         run: python tests/sqlite-stage2-history-retention-regression.py
 
+      # Stage 3 / Part A: existing offline databases must migrate warehouse IDs per store.
+      - name: Run SQLite Stage 3 warehouse migration regression
+        run: python tests/sqlite-stage3-warehouse-migration-regression.py
+
       # D3.2 / R1: SECURITY DEFINER Pull must enforce the same owner/seller visibility
       # contract as direct table reads. This runs only in the disposable PostgreSQL CI service.
       - name: Apply D3.2 Pull RBAC hardening
