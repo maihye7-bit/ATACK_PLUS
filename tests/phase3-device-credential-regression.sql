@@ -54,16 +54,30 @@ BEGIN
   PERFORM set_config('atack_test.d32_r2_device_id',v_device_id,TRUE);
   PERFORM set_config('atack_test.d32_r2_token_v1',v_token,TRUE);
 
-  IF EXISTS (
-      SELECT 1 FROM public.device_credentials
-       WHERE device_id=v_device_id::UUID AND token_hash=v_token
-  ) THEN
-    RAISE EXCEPTION 'Raw device token was stored instead of its hash';
-  END IF;
-  RAISE NOTICE 'PASS: owner can provision a user-bound device; credential is not exposed in the device table';
+  RAISE NOTICE 'PASS: owner can provision a user-bound device and receive its one-time credential';
 END
 $owner_provision$;
 RESET ROLE;
+DO $credential_hash_storage$
+BEGIN
+  IF EXISTS (
+      SELECT 1 FROM public.device_credentials
+       WHERE device_id=current_setting('atack_test.d32_r2_device_id')::UUID
+         AND token_hash=current_setting('atack_test.d32_r2_token_v1')
+  ) THEN
+    RAISE EXCEPTION 'Raw device token was stored instead of its hash';
+  END IF;
+  IF NOT EXISTS (
+      SELECT 1 FROM public.device_credentials
+       WHERE device_id=current_setting('atack_test.d32_r2_device_id')::UUID
+         AND token_hash=encode(public.atack_digest(
+           convert_to(current_setting('atack_test.d32_r2_token_v1'),'UTF8'),'sha256'),'hex')
+  ) THEN
+    RAISE EXCEPTION 'Device credential hash was not persisted';
+  END IF;
+  RAISE NOTICE 'PASS: only the one-way credential hash is persisted';
+END
+$credential_hash_storage$;
 
 -- Seller A can use the assigned device only with its current credential.
 SELECT set_config('request.jwt.claim.sub','20300000-0000-4000-8000-000000000022',TRUE);
