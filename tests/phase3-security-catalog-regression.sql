@@ -38,7 +38,9 @@ BEGIN
     'purchase_receipts','purchase_receipt_items','purchase_closures','purchase_closure_items',
     'purchase_amendments','processed_operations','change_log','sync_cursors',
     'store_sync_counters','sync_outbox','sync_conflicts','tombstones','sync_log',
-    'audit_logs','user_roles','users','roles','permissions','role_permissions','units','locations'
+    'audit_logs','user_roles','users','roles','permissions','role_permissions','units','locations',
+    -- Master records use the dedicated soft-delete RPC; REST DELETE is never allowed.
+    'categories','brands','products','customers','suppliers'
   ] LOOP
     IF has_table_privilege('authenticated', format('public.%I',r.relname), 'INSERT')
        OR has_table_privilege('authenticated', format('public.%I',r.relname), 'UPDATE')
@@ -77,6 +79,19 @@ BEGIN
     IF has_function_privilege('anon',r.oid,'EXECUTE') THEN
       RAISE EXCEPTION 'anon can execute SECURITY DEFINER function public.%(%)',
         r.proname,r.args;
+    END IF;
+  END LOOP;
+
+  -- Master-data soft deletion is RPC-only: confirm the restrictive DELETE
+  -- deny policy exists in addition to the missing direct table privilege.
+  FOREACH r.relname IN ARRAY ARRAY['categories','brands','products','customers','suppliers'] LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+       WHERE schemaname='public' AND tablename=r.relname
+         AND policyname='sec_deny_direct_delete_'||r.relname
+         AND permissive='RESTRICTIVE' AND cmd='DELETE'
+    ) THEN
+      RAISE EXCEPTION 'Missing restrictive direct DELETE denial for public.%',r.relname;
     END IF;
   END LOOP;
 
