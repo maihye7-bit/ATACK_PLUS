@@ -251,6 +251,10 @@ BEGIN
         v_shortage := GREATEST(v_base_qty-v_available,0);
 
         IF v_shortage>0 THEN
+            IF (SELECT reserved_quantity FROM public.stock WHERE id=v_stock_id)>0 THEN
+                RAISE EXCEPTION 'Negative stock cannot consume reserved inventory'
+                    USING ERRCODE='23514';
+            END IF;
             IF NOT public.has_store_permission(p_store_id,'inventory.allow_negative') THEN
                 RAISE EXCEPTION 'Insufficient available stock; inventory.allow_negative is required'
                     USING ERRCODE='42501';
