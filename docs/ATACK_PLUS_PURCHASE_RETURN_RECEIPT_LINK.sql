@@ -32,7 +32,6 @@ DECLARE
  v_stock UUID; v_available NUMERIC(18,4); v_batch TEXT; v_expiry TIMESTAMPTZ;
  v_old_qty NUMERIC(18,4); v_current_cost NUMERIC(18,4); v_new_cost NUMERIC(18,4);
 BEGIN
- IF v_location NOT IN ('main','warehouse','storage') THEN RAISE EXCEPTION 'Invalid stock location'; END IF;
  IF v_refund_method<>'CREDIT' THEN
    RAISE EXCEPTION 'Automatic cash/bank refunds are disabled; return value is credited to the supplier';
  END IF;
@@ -42,6 +41,7 @@ BEGIN
  SELECT c.app_user_id,c.already_processed INTO v_user,v_replay
   FROM public._claim_business_operation(p_store_id,p_operation_id,'purchase_return',v_return_id,p_payload,'purchases.return') c;
  IF v_replay THEN RETURN jsonb_build_object('success',TRUE,'replayed',TRUE,'return_id',v_return_id); END IF;
+ v_location:=public.resolve_store_location_id(p_store_id,v_location);
  SELECT supplier_id INTO v_supplier FROM public.purchases
   WHERE id=v_purchase_id AND store_id=p_store_id AND status<>'CANCELLED' FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'Original purchase not found or cancelled'; END IF;
