@@ -36,7 +36,7 @@ def foreign_keys(source: str, table: str):
 # protected by PHASE2_REPAIR_004_FK_HISTORY_RESTRICT.sql.
 EXPECTED = [
     ("product_units", SCHEMA, ("product_id",), "products"),
-    ("stock", SCHEMA, ("product_id",), "products"),
+    ("stock", SCHEMA, ("product_id","store_id"), "products"),
     ("payment_allocations", SCHEMA, ("payment_id",), "customer_payments"),
     ("payment_allocations", SCHEMA, ("invoice_id",), "invoices"),
     ("purchase_items", SCHEMA, ("purchase_id",), "purchases"),
