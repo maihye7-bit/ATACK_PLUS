@@ -278,7 +278,7 @@ FOR EACH ROW EXECUTE FUNCTION public.resolve_inventory_row_location();
 -- Warehouse records are first-class store-scoped sync entities.
 DROP TRIGGER IF EXISTS trg_locations_log_change ON public.locations;
 CREATE TRIGGER trg_locations_log_change
-AFTER INSERT OR UPDATE OR DELETE ON public.locations
+AFTER INSERT OR UPDATE ON public.locations
 FOR EACH ROW EXECUTE FUNCTION public.trg_log_change();
 
 -- Store-scoped warehouse visibility.
