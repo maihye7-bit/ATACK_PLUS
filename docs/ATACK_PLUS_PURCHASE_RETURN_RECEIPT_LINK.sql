@@ -112,7 +112,7 @@ BEGIN
      RAISE EXCEPTION 'Purchase return unit must match the original receipt line';
    END IF;
    IF v_returned+v_qty>v_item_received_total THEN
-     RAISE EXCEPTION 'Purchase return exceeds total accepted quantity on original purchase item' USING ERRCODE='23514';
+     RAISE EXCEPTION 'Purchase return exceeds accepted received quantity (aggregate across all receipt paths)' USING ERRCODE='23514';
    END IF;
 
    SELECT p.primary_unit_id,
