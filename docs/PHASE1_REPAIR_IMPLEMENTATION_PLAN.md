@@ -1065,6 +1065,10 @@ Added `tests/phase3-tombstone-event-contract-regression.sql` and CI steps after 
 - Seller Pull receives the canonical DELETE envelope with original record identity and distinct Tombstone ID, then ACKs its delivery.
 - A duplicate global Tombstone identity is rejected.
 
-**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+**CI evidence**
+- SQL migration smoke test: [run 46132378503](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46132378503) — completed / success on commit `c2afdde5e9de1f0ad096a51437fa6be30512771e`.
+- Job `140940153112`: R1, R2, R3 and R4 migrations and regression steps all completed / success.
+- R4 regression confirms target UUID primary keys, Tombstone uniqueness and trigger catalog coverage; idempotent soft delete; Tombstone-before-target-UPDATE order; cross-store rejection; canonical DELETE envelope; and retained global uniqueness guard.
+- This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No physical purge, restore, local/staging/production SQL or merge to `main` is included.
