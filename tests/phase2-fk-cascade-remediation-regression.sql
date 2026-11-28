@@ -114,12 +114,12 @@ BEGIN
 
   IF v_checked<>16 THEN RAISE EXCEPTION 'Expected 16 FK contracts; checked %',v_checked; END IF;
 
-  -- The nine lifecycle exclusions remain untouched and are still explicitly
+  -- The ten lifecycle exclusions remain untouched and are still explicitly
   -- represented as CASCADE; they require their own separately approved lifecycle design.
   IF (SELECT count(*) FROM pg_constraint c
       JOIN pg_namespace n ON n.oid=c.connamespace
-      WHERE n.nspname='public' AND c.contype='f' AND c.confdeltype='c')<>9 THEN
-    RAISE EXCEPTION 'Expected exactly nine excluded lifecycle CASCADE constraints';
+      WHERE n.nspname='public' AND c.contype='f' AND c.confdeltype='c')<>10 THEN
+    RAISE EXCEPTION 'Expected exactly ten excluded lifecycle CASCADE constraints';
   END IF;
 
   RAISE NOTICE 'Verified 16 RESTRICT contracts; real dependent-row DELETE checks executed for % constraints',
