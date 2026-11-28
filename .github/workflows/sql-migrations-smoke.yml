@@ -274,6 +274,16 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-tombstone-device-progress-regression.sql"
+
+      # D3.2 / R6: exact page boundaries and concurrent Change Log writes.
+      - name: Run D3.2 pagination boundary regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-sync-pagination-boundary-regression.sql"
+      - name: Run D3.2 concurrent page delivery regression
+        env:
+          PGPASSWORD: postgres
+        run: bash tests/phase3-sync-page-concurrency.sh
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
