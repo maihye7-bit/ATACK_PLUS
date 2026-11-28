@@ -104,9 +104,9 @@ sleep 3
 
 echo "Registering one owner device and one seller device through the real JWT RPC..."
 OWNER_DEVICE_RESULT="$(rpc_call "${OWNER_TOKEN}" "register_sync_device" \
-  "$(jq -nc --arg user "${OWNER_ID}" '{p_target_user_id:$user,p_device_name:"D3.2 Auth Owner Device",p_device_type:"DESKTOP}')")"
+  "$(jq -nc --arg user "${OWNER_ID}" '{p_target_user_id:$user,p_device_name:"D3.2 Auth Owner Device",p_device_type:"DESKTOP"}')")"
 SELLER_DEVICE_RESULT="$(rpc_call "${OWNER_TOKEN}" "register_sync_device" \
-  "$(jq -nc --arg user "${SELLER_ID}" '{p_target_user_id:$user,p_device_name:"D3.2 Auth Seller Device",p_device_type:"PHONE}')")"
+  "$(jq -nc --arg user "${SELLER_ID}" '{p_target_user_id:$user,p_device_name:"D3.2 Auth Seller Device",p_device_type:"PHONE"}')")"
 OWNER_DEVICE_ID="$(jq -er '.device_id' <<<"${OWNER_DEVICE_RESULT}")"
 OWNER_DEVICE_TOKEN="$(jq -er '.device_token' <<<"${OWNER_DEVICE_RESULT}")"
 SELLER_DEVICE_ID="$(jq -er '.device_id' <<<"${SELLER_DEVICE_RESULT}")"
