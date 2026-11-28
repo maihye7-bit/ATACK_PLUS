@@ -76,6 +76,18 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/ATACK_PLUS_STOCK_ADJUSTMENT_REPAIR.sql"
+      - name: Seed legacy inventory rows for store-scoped warehouse migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-warehouse-legacy-fixture.sql"
+      - name: Apply Stage 3 store-scoped warehouse migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE3_REPAIR_010_STORE_SCOPED_WAREHOUSES.sql"
+      - name: Run Stage 3 store-scoped warehouse regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-warehouse-store-scope-regression.sql"
       - name: Apply Phase 1 same-store integrity repair
         env:
           PGPASSWORD: postgres
