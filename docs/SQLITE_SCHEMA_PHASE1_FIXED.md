@@ -302,6 +302,28 @@ CREATE TABLE stock (
 CREATE INDEX idx_stock_product ON stock(product_id);
 CREATE INDEX idx_stock_location ON stock(location_id);
 
+CREATE TRIGGER trg_stock_store_location_ins
+BEFORE INSERT ON stock
+WHEN NOT EXISTS (
+    SELECT 1 FROM products p JOIN locations l
+      ON l.id=NEW.location_id AND l.store_id=NEW.store_id AND l.is_active=1
+     WHERE p.id=NEW.product_id AND p.store_id=NEW.store_id
+)
+BEGIN
+    SELECT RAISE(ABORT,'Stock product/location must belong to the same store and active warehouse');
+END;
+
+CREATE TRIGGER trg_stock_store_location_upd
+BEFORE UPDATE OF product_id,store_id,location_id ON stock
+WHEN NOT EXISTS (
+    SELECT 1 FROM products p JOIN locations l
+      ON l.id=NEW.location_id AND l.store_id=NEW.store_id AND l.is_active=1
+     WHERE p.id=NEW.product_id AND p.store_id=NEW.store_id
+)
+BEGIN
+    SELECT RAISE(ABORT,'Stock product/location must belong to the same store and active warehouse');
+END;
+
 CREATE TABLE stock_movements (
     id TEXT PRIMARY KEY CHECK(length(id) = 36),
     product_id TEXT NOT NULL CHECK(length(product_id) = 36),
@@ -329,6 +351,30 @@ CREATE TABLE stock_movements (
 
 CREATE INDEX idx_stock_movements_product ON stock_movements(product_id);
 CREATE INDEX idx_stock_movements_date ON stock_movements(created_at);
+
+CREATE TRIGGER trg_stock_movements_store_location_ins
+BEFORE INSERT ON stock_movements
+WHEN NOT EXISTS (
+    SELECT 1 FROM products p JOIN locations l
+      ON l.id=NEW.location_id AND l.store_id=NEW.store_id AND l.is_active=1
+    JOIN users u ON u.id=NEW.user_id AND u.store_id=NEW.store_id
+     WHERE p.id=NEW.product_id AND p.store_id=NEW.store_id
+)
+BEGIN
+    SELECT RAISE(ABORT,'Stock movement product/location/user must belong to the same store');
+END;
+
+CREATE TRIGGER trg_stock_movements_store_location_upd
+BEFORE UPDATE OF product_id,store_id,location_id,user_id ON stock_movements
+WHEN NOT EXISTS (
+    SELECT 1 FROM products p JOIN locations l
+      ON l.id=NEW.location_id AND l.store_id=NEW.store_id AND l.is_active=1
+    JOIN users u ON u.id=NEW.user_id AND u.store_id=NEW.store_id
+     WHERE p.id=NEW.product_id AND p.store_id=NEW.store_id
+)
+BEGIN
+    SELECT RAISE(ABORT,'Stock movement product/location/user must belong to the same store');
+END;
 CREATE INDEX idx_stock_movements_reference ON stock_movements(reference_type, reference_id);
 CREATE INDEX idx_stock_movements_sync ON stock_movements(sync_status);
 ```
@@ -1382,6 +1428,47 @@ BEGIN
             ));
 END;
 
+
+-- Store-scoped warehouse reference data is part of the Pull stream.
+CREATE TRIGGER trg_locations_log_insert
+AFTER INSERT ON locations
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,new_values_json)
+    VALUES(NEW.store_id,
+           (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+           'locations',NEW.id,'INSERT',
+           json_object('id',NEW.id,'store_id',NEW.store_id,'code',NEW.code,'name',NEW.name,
+                       'is_default',NEW.is_default,'is_active',NEW.is_active,
+                       'created_at',NEW.created_at,'updated_at',NEW.updated_at));
+END;
+CREATE TRIGGER trg_locations_log_update
+AFTER UPDATE ON locations
+WHEN NEW.id IS NOT OLD.id OR NEW.store_id IS NOT OLD.store_id OR NEW.code IS NOT OLD.code
+  OR NEW.name IS NOT OLD.name OR NEW.is_default IS NOT OLD.is_default
+  OR NEW.is_active IS NOT OLD.is_active OR NEW.updated_at IS NOT OLD.updated_at
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json,new_values_json)
+    VALUES(NEW.store_id,
+           (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+           'locations',NEW.id,'UPDATE',
+           json_object('id',OLD.id,'store_id',OLD.store_id,'code',OLD.code,'name',OLD.name,
+                       'is_default',OLD.is_default,'is_active',OLD.is_active,
+                       'created_at',OLD.created_at,'updated_at',OLD.updated_at),
+           json_object('id',NEW.id,'store_id',NEW.store_id,'code',NEW.code,'name',NEW.name,
+                       'is_default',NEW.is_default,'is_active',NEW.is_active,
+                       'created_at',NEW.created_at,'updated_at',NEW.updated_at));
+END;
+CREATE TRIGGER trg_locations_log_delete
+AFTER DELETE ON locations
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json)
+    VALUES(OLD.store_id,
+           (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=OLD.store_id),
+           'locations',OLD.id,'DELETE',
+           json_object('id',OLD.id,'store_id',OLD.store_id,'code',OLD.code,'name',OLD.name,
+                       'is_default',OLD.is_default,'is_active',OLD.is_active,
+                       'created_at',OLD.created_at,'updated_at',OLD.updated_at));
+END;
 
 -- Additional Change Log Triggers: all remaining business tables (excluding users to avoid syncing password hashes).
 CREATE TRIGGER trg_product_units_log_insert
