@@ -82,6 +82,7 @@ ALTER TABLE public.stock_movements DROP CONSTRAINT IF EXISTS stock_movements_pro
 ALTER TABLE public.stock_adjustments DROP CONSTRAINT IF EXISTS stock_adjustments_product_id_fkey;
 
 ALTER TABLE public.locations DROP CONSTRAINT IF EXISTS locations_pkey;
+ALTER TABLE public.locations DROP CONSTRAINT IF EXISTS locations_id_check;
 ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS store_id UUID;
 ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS code TEXT;
 ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
