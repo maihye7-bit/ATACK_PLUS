@@ -263,8 +263,8 @@ END
 $pull_tombstone$;
 RESET ROLE;
 
--- The stronger global UNIQUE guard rejects a duplicate tombstone even if a
--- caller supplies another store_id for the same globally unique target UUID.
+-- The stronger global UNIQUE guard rejects a duplicate tombstone for the
+-- same logical target, independently of the idempotent soft-delete RPC.
 DO $unique_guard$
 DECLARE denied BOOLEAN := FALSE;
 BEGIN
