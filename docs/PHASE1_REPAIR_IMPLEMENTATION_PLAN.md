@@ -1138,6 +1138,11 @@ Added:
 
 The existing R3 1,201-event regression continues to cover 500/500/201 pagination, replay, idempotent ACK and no duplicates.
 
-**CI evidence:** pending the workflow run containing the R5/R6 tests. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+**CI evidence**
+- SQL migration smoke test: [run 46133263331](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46133263331) — completed / success on commit `3ac75ede7cf6a54943ee841156c2de8185159c9b`.
+- Job `140942904567`: all D3.2 R1–R6 migration and regression steps completed / success.
+- Exact 499/500/501 boundaries passed. The two-session concurrency test confirmed an event committed after page 1's snapshot was returned on the next page after ACK, with no gap.
+- The 1,201-event pagination, Tombstone identity, two-device progress, R1 seller isolation and R2 credential tests also passed in this workflow.
+- This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No Global Stream migration, client implementation, persistent DB execution or `main` merge is included.
