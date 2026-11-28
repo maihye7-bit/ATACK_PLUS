@@ -109,6 +109,99 @@ try:
 except sqlite3.IntegrityError:
     pass
 
+# Execute the actual Phase 3 SQLite Change Log triggers for purchase returns.
+trigger_sql = re.findall(
+    r"CREATE TRIGGER IF NOT EXISTS trg_purchase_(?:returns|return_items)_log_(?:insert|update|delete).*?END;",
+    PHASE3,
+    flags=re.IGNORECASE | re.DOTALL,
+)
+assert len(trigger_sql) == 6, f"Expected six purchase-return Change Log triggers, found {len(trigger_sql)}"
+
+db = sqlite3.connect(":memory:")
+db.execute("PRAGMA foreign_keys=ON")
+db.executescript("""
+    CREATE TABLE change_log(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        store_id TEXT NOT NULL,
+        sync_cursor INTEGER NOT NULL,
+        table_name TEXT NOT NULL,
+        record_uuid TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        old_values_json TEXT,
+        new_values_json TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE purchase_returns(
+        id TEXT PRIMARY KEY, store_id TEXT NOT NULL, return_number TEXT,
+        original_purchase_id TEXT, reason TEXT, total_amount NUMERIC,
+        refund_method TEXT, notes TEXT, created_by TEXT, device_sync_id TEXT,
+        is_synced INTEGER, sync_status TEXT, synced_at TEXT,
+        created_at TEXT, updated_at TEXT
+    );
+    CREATE TABLE purchase_return_items(
+        id TEXT PRIMARY KEY, return_id TEXT NOT NULL, product_id TEXT,
+        quantity NUMERIC, quantity_unit_id TEXT, unit_price NUMERIC,
+        line_total NUMERIC, batch_number TEXT, expiry_date TEXT, created_at TEXT,
+        FOREIGN KEY(return_id) REFERENCES purchase_returns(id) ON DELETE RESTRICT
+    );
+""")
+db.executescript("\\n".join(trigger_sql))
+db.execute(
+    """INSERT INTO purchase_returns
+       (id,store_id,return_number,original_purchase_id,reason,total_amount,
+        refund_method,notes,created_by,device_sync_id,is_synced,sync_status,
+        synced_at,created_at,updated_at)
+       VALUES ('return-1','store-a','PR-1','purchase-1','test',10,
+               'CREDIT',NULL,'user-1',NULL,0,'PENDING',NULL,'t0','t0')"""
+)
+db.execute("UPDATE purchase_returns SET reason='updated' WHERE id='return-1'")
+db.execute(
+    """INSERT INTO purchase_return_items
+       (id,return_id,product_id,quantity,quantity_unit_id,unit_price,line_total,created_at)
+       VALUES ('item-1','return-1','product-1',1,'pcs',10,10,'t0')"""
+)
+db.execute("UPDATE purchase_return_items SET quantity=2 WHERE id='item-1'")
+
+# Parent deletion is blocked while the history-bearing child exists.
+try:
+    db.execute("DELETE FROM purchase_returns WHERE id='return-1'")
+    raise AssertionError("SQLite allowed purchase-return parent DELETE with a child")
+except sqlite3.IntegrityError:
+    pass
+
+# If Change Log insertion fails, the child delete and its data change roll back.
+db.executescript("""
+    CREATE TRIGGER reject_change_log
+    BEFORE INSERT ON change_log
+    BEGIN
+        SELECT RAISE(ABORT,'forced Change Log failure');
+    END;
+""")
+try:
+    db.execute("DELETE FROM purchase_return_items WHERE id='item-1'")
+    raise AssertionError("Child DELETE succeeded after forced Change Log failure")
+except sqlite3.IntegrityError:
+    pass
+assert db.execute("SELECT COUNT(*) FROM purchase_return_items WHERE id='item-1'").fetchone()[0] == 1
+db.execute("DROP TRIGGER reject_change_log")
+
+db.execute("DELETE FROM purchase_return_items WHERE id='item-1'")
+db.execute("DELETE FROM purchase_returns WHERE id='return-1'")
+events = db.execute(
+    "SELECT store_id,table_name,operation,sync_cursor FROM change_log ORDER BY sync_cursor"
+).fetchall()
+assert [(x[1],x[2]) for x in events] == [
+    ("purchase_returns","INSERT"),
+    ("purchase_returns","UPDATE"),
+    ("purchase_return_items","INSERT"),
+    ("purchase_return_items","UPDATE"),
+    ("purchase_return_items","DELETE"),
+    ("purchase_returns","DELETE"),
+], events
+assert all(x[0] == "store-a" for x in events), events
+assert [x[3] for x in events] == list(range(1,7)), events
+db.close()
+
 print(
     "PASS: 12 SQLite business-history FK contracts are RESTRICT; "
     "all 12 reject parent DELETE; lifecycle cascades remain; "
