@@ -2,7 +2,6 @@
 -- Disposable PostgreSQL 16 CI database only. All fixture data is rolled back.
 BEGIN;
 INSERT INTO public.units(id,name,symbol) VALUES ('pcs','Piece','pc') ON CONFLICT(id) DO NOTHING;
-INSERT INTO public.locations(id,name,is_default) VALUES ('main','Main',TRUE) ON CONFLICT(id) DO NOTHING;
 INSERT INTO public.stores(id,name) VALUES ('31000000-0000-4000-8000-000000000001','D3.1 Test Store');
 INSERT INTO public.users(id,store_id,username,full_name) VALUES
  ('32000000-0000-4000-8000-000000000001','31000000-0000-4000-8000-000000000001','d31_change_log_owner','D3.1 Test User');
