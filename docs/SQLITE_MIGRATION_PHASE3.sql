@@ -204,8 +204,123 @@ CREATE INDEX IF NOT EXISTS idx_general_ledger_reference ON general_ledger(refere
 -- 2. Update Change Log Triggers
 -- ============================================================
 
--- Add triggers to outbox tables (already present in base schema, ensure Phase 3 tables included)
--- Note: SQLite triggers for change_log are complex; ensure they fire for new tables during Flutter sync operations
+-- Purchase-return parent events use their own stable store_id.
+CREATE TRIGGER IF NOT EXISTS trg_purchase_returns_log_insert
+AFTER INSERT ON purchase_returns
+BEGIN
+    INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
+    VALUES (NEW.store_id,
+            (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+            'purchase_returns', NEW.id, 'INSERT', NULL,
+            json_object('id',NEW.id,'store_id',NEW.store_id,'return_number',NEW.return_number,
+                        'original_purchase_id',NEW.original_purchase_id,'reason',NEW.reason,
+                        'total_amount',NEW.total_amount,'refund_method',NEW.refund_method,'notes',NEW.notes,
+                        'created_by',NEW.created_by,'device_sync_id',NEW.device_sync_id,
+                        'is_synced',NEW.is_synced,'sync_status',NEW.sync_status,'synced_at',NEW.synced_at,
+                        'created_at',NEW.created_at,'updated_at',NEW.updated_at));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_returns_log_update
+AFTER UPDATE ON purchase_returns
+WHEN NEW.id IS NOT OLD.id OR NEW.store_id IS NOT OLD.store_id
+  OR NEW.return_number IS NOT OLD.return_number
+  OR NEW.original_purchase_id IS NOT OLD.original_purchase_id
+  OR NEW.reason IS NOT OLD.reason OR NEW.total_amount IS NOT OLD.total_amount
+  OR NEW.refund_method IS NOT OLD.refund_method OR NEW.notes IS NOT OLD.notes
+  OR NEW.created_by IS NOT OLD.created_by OR NEW.device_sync_id IS NOT OLD.device_sync_id
+  OR NEW.is_synced IS NOT OLD.is_synced OR NEW.sync_status IS NOT OLD.sync_status
+  OR NEW.synced_at IS NOT OLD.synced_at OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+    INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
+    VALUES (NEW.store_id,
+            (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+            'purchase_returns', NEW.id, 'UPDATE',
+            json_object('id',OLD.id,'store_id',OLD.store_id,'return_number',OLD.return_number,
+                        'original_purchase_id',OLD.original_purchase_id,'reason',OLD.reason,
+                        'total_amount',OLD.total_amount,'refund_method',OLD.refund_method,'notes',OLD.notes,
+                        'created_by',OLD.created_by,'device_sync_id',OLD.device_sync_id,
+                        'is_synced',OLD.is_synced,'sync_status',OLD.sync_status,'synced_at',OLD.synced_at,
+                        'created_at',OLD.created_at,'updated_at',OLD.updated_at),
+            json_object('id',NEW.id,'store_id',NEW.store_id,'return_number',NEW.return_number,
+                        'original_purchase_id',NEW.original_purchase_id,'reason',NEW.reason,
+                        'total_amount',NEW.total_amount,'refund_method',NEW.refund_method,'notes',NEW.notes,
+                        'created_by',NEW.created_by,'device_sync_id',NEW.device_sync_id,
+                        'is_synced',NEW.is_synced,'sync_status',NEW.sync_status,'synced_at',NEW.synced_at,
+                        'created_at',NEW.created_at,'updated_at',NEW.updated_at));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_returns_log_delete
+AFTER DELETE ON purchase_returns
+BEGIN
+    INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
+    VALUES (OLD.store_id,
+            (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=OLD.store_id),
+            'purchase_returns', OLD.id, 'DELETE',
+            json_object('id',OLD.id,'store_id',OLD.store_id,'return_number',OLD.return_number,
+                        'original_purchase_id',OLD.original_purchase_id,'reason',OLD.reason,
+                        'total_amount',OLD.total_amount,'refund_method',OLD.refund_method,'notes',OLD.notes,
+                        'created_by',OLD.created_by,'device_sync_id',OLD.device_sync_id,
+                        'is_synced',OLD.is_synced,'sync_status',OLD.sync_status,'synced_at',OLD.synced_at,
+                        'created_at',OLD.created_at,'updated_at',OLD.updated_at), NULL);
+END;
+
+-- Child ownership is resolved through the purchase-return parent. RESTRICT on
+-- return_id guarantees that a parent cannot disappear before its child events.
+CREATE TRIGGER IF NOT EXISTS trg_purchase_return_items_log_insert
+AFTER INSERT ON purchase_return_items
+BEGIN
+    INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
+    VALUES ((SELECT store_id FROM purchase_returns WHERE id=NEW.return_id),
+            (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log
+              WHERE store_id=(SELECT store_id FROM purchase_returns WHERE id=NEW.return_id)),
+            'purchase_return_items', NEW.id, 'INSERT', NULL,
+            json_object('id',NEW.id,'return_id',NEW.return_id,'product_id',NEW.product_id,
+                        'quantity',NEW.quantity,'quantity_unit_id',NEW.quantity_unit_id,
+                        'unit_price',NEW.unit_price,'line_total',NEW.line_total,
+                        'batch_number',NEW.batch_number,'expiry_date',NEW.expiry_date,
+                        'created_at',NEW.created_at));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_return_items_log_update
+AFTER UPDATE ON purchase_return_items
+WHEN NEW.id IS NOT OLD.id OR NEW.return_id IS NOT OLD.return_id
+  OR NEW.product_id IS NOT OLD.product_id OR NEW.quantity IS NOT OLD.quantity
+  OR NEW.quantity_unit_id IS NOT OLD.quantity_unit_id
+  OR NEW.unit_price IS NOT OLD.unit_price OR NEW.line_total IS NOT OLD.line_total
+  OR NEW.batch_number IS NOT OLD.batch_number OR NEW.expiry_date IS NOT OLD.expiry_date
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+    INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
+    VALUES ((SELECT store_id FROM purchase_returns WHERE id=NEW.return_id),
+            (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log
+              WHERE store_id=(SELECT store_id FROM purchase_returns WHERE id=NEW.return_id)),
+            'purchase_return_items', NEW.id, 'UPDATE',
+            json_object('id',OLD.id,'return_id',OLD.return_id,'product_id',OLD.product_id,
+                        'quantity',OLD.quantity,'quantity_unit_id',OLD.quantity_unit_id,
+                        'unit_price',OLD.unit_price,'line_total',OLD.line_total,
+                        'batch_number',OLD.batch_number,'expiry_date',OLD.expiry_date,
+                        'created_at',OLD.created_at),
+            json_object('id',NEW.id,'return_id',NEW.return_id,'product_id',NEW.product_id,
+                        'quantity',NEW.quantity,'quantity_unit_id',NEW.quantity_unit_id,
+                        'unit_price',NEW.unit_price,'line_total',NEW.line_total,
+                        'batch_number',NEW.batch_number,'expiry_date',NEW.expiry_date,
+                        'created_at',NEW.created_at));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_purchase_return_items_log_delete
+AFTER DELETE ON purchase_return_items
+BEGIN
+    INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
+    VALUES ((SELECT store_id FROM purchase_returns WHERE id=OLD.return_id),
+            (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log
+              WHERE store_id=(SELECT store_id FROM purchase_returns WHERE id=OLD.return_id)),
+            'purchase_return_items', OLD.id, 'DELETE',
+            json_object('id',OLD.id,'return_id',OLD.return_id,'product_id',OLD.product_id,
+                        'quantity',OLD.quantity,'quantity_unit_id',OLD.quantity_unit_id,
+                        'unit_price',OLD.unit_price,'line_total',OLD.line_total,
+                        'batch_number',OLD.batch_number,'expiry_date',OLD.expiry_date,
+                        'created_at',OLD.created_at), NULL);
+END;
 
 -- ============================================================
 -- 3. SQLite-Specific Notes
