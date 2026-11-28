@@ -7,6 +7,7 @@ DECLARE
     v_location_a TEXT;
     v_location_b TEXT;
     v_new_store UUID := 'a3000000-0000-4000-8000-000000000003';
+    v_custom_location TEXT;
 BEGIN
     IF (SELECT COUNT(*) FROM public.locations WHERE store_id IN (v_store_a,v_store_b)) <> 6 THEN
         RAISE EXCEPTION 'Each legacy store must receive exactly three locations';
@@ -70,6 +71,26 @@ BEGIN
     IF (SELECT COUNT(*) FROM public.locations WHERE store_id=v_new_store) <> 3 THEN
         RAISE EXCEPTION 'New store did not receive three default locations';
     END IF;
+
+    -- Owner-only warehouse administration is audited and deactivation is soft.
+    PERFORM set_config('request.jwt.claim.sub','a3000000-0000-4000-8000-000000000101',TRUE);
+    v_custom_location := public.create_store_location(v_store_a,'cold_room','Cold Room',FALSE);
+    IF NOT EXISTS (
+        SELECT 1 FROM public.locations
+         WHERE id=v_custom_location AND store_id=v_store_a AND code='cold_room' AND is_active
+    ) THEN
+        RAISE EXCEPTION 'Owner could not create a store-scoped warehouse';
+    END IF;
+    PERFORM public.deactivate_store_location(v_store_a,v_custom_location);
+    IF EXISTS (SELECT 1 FROM public.locations WHERE id=v_custom_location AND is_active) THEN
+        RAISE EXCEPTION 'Warehouse deactivation did not preserve an inactive row';
+    END IF;
+    BEGIN
+        PERFORM public.deactivate_store_location(v_store_a,v_location_a);
+        RAISE EXCEPTION 'Default warehouse was deactivated without replacement';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
 
     -- Product/store and location/store pairs are both enforced by composite FKs.
     BEGIN
