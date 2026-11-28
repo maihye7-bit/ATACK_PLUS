@@ -1458,17 +1458,7 @@ BEGIN
                        'is_default',NEW.is_default,'is_active',NEW.is_active,
                        'created_at',NEW.created_at,'updated_at',NEW.updated_at));
 END;
-CREATE TRIGGER trg_locations_log_delete
-AFTER DELETE ON locations
-BEGIN
-    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json)
-    VALUES(OLD.store_id,
-           (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=OLD.store_id),
-           'locations',OLD.id,'DELETE',
-           json_object('id',OLD.id,'store_id',OLD.store_id,'code',OLD.code,'name',OLD.name,
-                       'is_default',OLD.is_default,'is_active',OLD.is_active,
-                       'created_at',OLD.created_at,'updated_at',OLD.updated_at));
-END;
+-- Physical warehouse deletion is intentionally unsupported; deactivate instead.
 
 -- Additional Change Log Triggers: all remaining business tables (excluding users to avoid syncing password hashes).
 CREATE TRIGGER trg_product_units_log_insert
