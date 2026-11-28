@@ -18,13 +18,13 @@ BEGIN
      WHERE n.nspname='public' AND c.relkind IN ('r','p')
   LOOP
     IF NOT r.relrowsecurity THEN
-      RAISE EXCEPTION 'RLS is disabled on public table %', v_table;
+      RAISE EXCEPTION 'RLS is disabled on public table %', r.relname;
     END IF;
-    IF has_table_privilege('anon', format('public.%I',v_table), 'INSERT')
-       OR has_table_privilege('anon', format('public.%I',v_table), 'UPDATE')
-       OR has_table_privilege('anon', format('public.%I',v_table), 'DELETE')
-       OR has_table_privilege('anon', format('public.%I',v_table), 'TRUNCATE') THEN
-      RAISE EXCEPTION 'anon has direct write privilege on public.%', v_table;
+    IF has_table_privilege('anon', format('public.%I',r.relname), 'INSERT')
+       OR has_table_privilege('anon', format('public.%I',r.relname), 'UPDATE')
+       OR has_table_privilege('anon', format('public.%I',r.relname), 'DELETE')
+       OR has_table_privilege('anon', format('public.%I',r.relname), 'TRUNCATE') THEN
+      RAISE EXCEPTION 'anon has direct write privilege on public.%', r.relname;
     END IF;
   END LOOP;
 
