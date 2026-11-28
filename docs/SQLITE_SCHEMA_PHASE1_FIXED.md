@@ -234,7 +234,7 @@ CREATE TABLE product_units (
     is_default INTEGER DEFAULT 0 CHECK(is_default IN (0, 1)),
     sort_order INTEGER DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
     FOREIGN KEY (unit_id) REFERENCES units(id),
     UNIQUE(product_id, unit_id)
 );
@@ -262,7 +262,7 @@ CREATE TABLE stock (
     reserved_quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(reserved_quantity >= 0 AND reserved_quantity <= quantity),
     available_quantity NUMERIC(18,4) GENERATED ALWAYS AS (quantity - reserved_quantity) STORED,
     last_updated TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
     FOREIGN KEY (location_id) REFERENCES locations(id),
     CONSTRAINT unique_product_location UNIQUE (product_id, location_id)
 );
@@ -372,8 +372,8 @@ CREATE TABLE payment_allocations (
     invoice_id TEXT NOT NULL CHECK(length(invoice_id) = 36),
     allocated_amount NUMERIC(18,4) NOT NULL CHECK(allocated_amount > 0),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (payment_id) REFERENCES customer_payments(id) ON DELETE CASCADE,
-    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+    FOREIGN KEY (payment_id) REFERENCES customer_payments(id) ON DELETE RESTRICT,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE RESTRICT,
     UNIQUE(payment_id, invoice_id)
 );
 ```
@@ -459,8 +459,8 @@ CREATE TABLE purchase_items (
     sync_status TEXT DEFAULT 'PENDING' CHECK(sync_status IN ('SYNCED', 'PENDING', 'ERROR', 'CONFLICT')),
     synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,
-    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE RESTRICT,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
     FOREIGN KEY (quantity_unit_id) REFERENCES units(id) ON DELETE RESTRICT
 );
 ```
@@ -484,7 +484,7 @@ CREATE TABLE supplier_ledger (
     sync_status TEXT DEFAULT 'PENDING' CHECK(sync_status IN ('SYNCED', 'PENDING', 'ERROR', 'CONFLICT')),
     synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT,
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
@@ -505,7 +505,7 @@ CREATE TABLE supplier_payments (
     synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT,
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 ```
@@ -575,7 +575,7 @@ CREATE TABLE invoice_items (
     sync_status TEXT DEFAULT 'PENDING' CHECK(sync_status IN ('SYNCED', 'PENDING', 'ERROR', 'CONFLICT')),
     synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE RESTRICT,
     FOREIGN KEY (product_id) REFERENCES products(id),
     FOREIGN KEY (quantity_unit_id) REFERENCES units(id)
 );
@@ -623,7 +623,7 @@ CREATE TABLE return_items (
     batch_number TEXT,
     expiry_date TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (return_id) REFERENCES sales_returns(id) ON DELETE CASCADE,
+    FOREIGN KEY (return_id) REFERENCES sales_returns(id) ON DELETE RESTRICT,
     FOREIGN KEY (product_id) REFERENCES products(id)
 );
 ```
@@ -780,7 +780,7 @@ CREATE TABLE tombstones (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (store_id) REFERENCES stores(id),
     FOREIGN KEY (deleted_by) REFERENCES users(id),
-    CONSTRAINT unique_tombstone UNIQUE (table_name, record_uuid)
+    CONSTRAINT unique_tombstone UNIQUE (store_id, table_name, record_uuid)
 );
 
 CREATE INDEX idx_tombstones_store ON tombstones(store_id);
