@@ -55,6 +55,7 @@ BEGIN
 
   SELECT COALESCE(MAX(sync_cursor),0) INTO v_base
     FROM public.change_log WHERE store_id=v_store AND table_name='purchases';
+  PERFORM set_config('atack_test.d32_r3_purchase_base',v_base::TEXT,TRUE);
   INSERT INTO public.sync_cursors(store_id,device_id,table_name,last_pull_seq,cursor_value)
   VALUES(v_store,v_device,'purchases',v_base,v_base::TEXT)
   ON CONFLICT (store_id,device_id,table_name) DO UPDATE
@@ -232,6 +233,7 @@ DECLARE
   v_page JSONB;
   v_cursor BIGINT;
   v_max BIGINT;
+  v_base BIGINT := current_setting('atack_test.d32_r3_purchase_base')::BIGINT;
 BEGIN
   v_page := public.get_unsynced_records_page(v_store,v_device,'purchases',v_token);
   IF (v_page->>'event_count')::INTEGER <> 0
@@ -246,8 +248,12 @@ BEGIN
    WHERE store_id=v_store AND device_id=v_device AND table_name='purchases';
   SELECT COALESCE(MAX(sync_cursor),0) INTO v_max
     FROM public.change_log WHERE store_id=v_store AND table_name='purchases';
+  IF v_max <= v_base THEN
+    RAISE EXCEPTION 'Purchase Change Log fixtures were not created: base %, max %',v_base,v_max;
+  END IF;
   IF v_cursor IS DISTINCT FROM v_max THEN
-    RAISE EXCEPTION 'Invisible event checkpoint did not advance safely';
+    RAISE EXCEPTION 'Invisible event checkpoint did not advance safely: cursor %, base %, max %',
+      v_cursor,v_base,v_max;
   END IF;
   RAISE NOTICE 'PASS: invisible-only pages expose no event count/has_more/delivery ID and checkpoint safely';
 END
