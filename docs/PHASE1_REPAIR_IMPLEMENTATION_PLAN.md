@@ -1031,3 +1031,40 @@ Added `tests/phase3-sync-delivery-ack-regression.sql` and appended R3 migration/
 - This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No local, staging or production database was touched; no merge to `main` was performed.
+
+
+### 19.14 D3.2 / R4 — canonical Tombstone DELETE event contract
+
+**Status:** Implemented on `repair/verified-fixes`; disposable PostgreSQL CI validation is pending. No persistent database has been modified.
+
+#### A. Identity and uniqueness decision
+
+The five soft-delete targets (`categories`, `brands`, `products`, `customers`, `suppliers`) use a globally unique UUID `id` primary key and a non-null UUID `store_id`. Therefore the approved logical identity remains `store_id + table_name + record_uuid`, while the existing database constraint `UNIQUE(table_name, record_uuid)` is a stronger duplicate guard. It is intentionally retained; adding `store_id` to that constraint would weaken protection without adding a valid identity case under the current global-PK schema. A constraint comment records the reason and the condition that would require revisiting it.
+
+The polymorphic Tombstone row ID remains distinct from the original record UUID. The original target is validated by `soft_delete_record` against both ID and store before a Tombstone is created.
+
+#### B. Canonical Pull envelope
+
+Added `docs/PHASE3_REPAIR_008_TOMBSTONE_EVENT_CONTRACT.sql`, replacing the R3 page serializer while preserving its delivery ledger and ACK behavior:
+- A Tombstone INSERT is exposed as logical `event_type = DELETE` and `operation = DELETE`.
+- The event's `table_name` and `record_uuid` identify the original target entity.
+- `tombstone_id` separately identifies the Tombstone row.
+- The envelope carries `store_id`, `deleted_at` and `deleted_by`.
+- The transport page remains the `tombstones` stream.
+- Tombstone UPDATE and physical DELETE metadata events are excluded from the client delete stream; the canonical signal is the original Tombstone INSERT.
+- The existing operation order is preserved: Tombstone INSERT is logged before the original target's inactive-state UPDATE. Client reconciliation must treat the Tombstone as authoritative and ignore stale updates that would otherwise reintroduce an active record.
+
+#### C. Regression and CI
+
+Added `tests/phase3-tombstone-event-contract-regression.sql` and CI steps after R3. It checks:
+- All five soft-delete targets retain UUID primary keys and non-null store ownership.
+- The exact global `unique_tombstone` guard remains present.
+- The Tombstone Change Log trigger is enabled and points to `trg_log_change()`.
+- A real owner soft-delete creates one Tombstone, emits the Tombstone event before the target UPDATE, and remains idempotent on replay.
+- A user from another store cannot tombstone the target.
+- Seller Pull receives the canonical DELETE envelope with original record identity and distinct Tombstone ID, then ACKs its delivery.
+- A duplicate global Tombstone identity is rejected.
+
+**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+
+No physical purge, restore, local/staging/production SQL or merge to `main` is included.
