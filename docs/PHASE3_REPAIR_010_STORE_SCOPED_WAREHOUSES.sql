@@ -150,6 +150,10 @@ SELECT new_id,store_id,old_id,location_name,was_default,TRUE
 CREATE UNIQUE INDEX IF NOT EXISTS uq_locations_one_active_default
     ON public.locations(store_id) WHERE is_default AND is_active;
 
+-- Composite FKs need a matching candidate key on products.
+ALTER TABLE public.products
+    ADD CONSTRAINT uq_products_id_store UNIQUE (id,store_id);
+
 ALTER TABLE public.stock
     ALTER COLUMN store_id SET NOT NULL,
     ALTER COLUMN location_id DROP DEFAULT,
@@ -172,10 +176,6 @@ ALTER TABLE public.stock_adjustments
         REFERENCES public.products(id,store_id) ON DELETE RESTRICT,
     ADD CONSTRAINT fk_stock_adjustments_location_store FOREIGN KEY (location_id,store_id)
         REFERENCES public.locations(id,store_id) ON DELETE RESTRICT;
-
--- Composite FKs need a matching candidate key on products.
-ALTER TABLE public.products
-    ADD CONSTRAINT uq_products_id_store UNIQUE (id,store_id);
 
 -- Location rows are created automatically for every newly provisioned store.
 CREATE OR REPLACE FUNCTION public.create_default_store_locations()
@@ -245,6 +245,12 @@ DROP TRIGGER IF EXISTS trg_stock_adjustments_resolve_location ON public.stock_ad
 CREATE TRIGGER trg_stock_adjustments_resolve_location
 BEFORE INSERT OR UPDATE OF store_id,location_id ON public.stock_adjustments
 FOR EACH ROW EXECUTE FUNCTION public.validate_stock_adjustment_location_store();
+
+-- Warehouse records are first-class store-scoped sync entities.
+DROP TRIGGER IF EXISTS trg_locations_log_change ON public.locations;
+CREATE TRIGGER trg_locations_log_change
+AFTER INSERT OR UPDATE OR DELETE ON public.locations
+FOR EACH ROW EXECUTE FUNCTION public.trg_log_change();
 
 -- Store-scoped warehouse visibility.
 ALTER TABLE public.locations ENABLE ROW LEVEL SECURITY;
