@@ -269,6 +269,13 @@ jobs:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-device-credential-regression.sql"
 
+      # D-016: negative stock sale and adjustment require permission, reason,
+      # operation evidence and a registered device credential. Run after R2.
+      - name: Run Stage 3 negative-stock policy regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-negative-stock-policy-regression.sql"
+
       # D3.2 / R3: a cursor can be acknowledged only through a server-issued page record.
       - name: Apply D3.2 delivery-bound ACK
         env:
