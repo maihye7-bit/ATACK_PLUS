@@ -640,6 +640,24 @@ Scope note: the database/RPC/RLS role correction is verified in CI, but this rep
 
 ---
 
+## Stage 3 / Part B — D-016 negative-stock authorization
+
+| Test | File / migration | Required result |
+|---|---|---|
+| PostgreSQL evidence schema | `docs/PHASE3_REPAIR_011_NEGATIVE_STOCK_AUDIT.sql` | Movement and adjustment rows carry operation, registered device, shortage and authorization state; device/operation ownership is constrained to the same store |
+| Negative sale authorization | `docs/ATACK_PLUS_PHASE2_BUSINESS_RPCS.sql` | Sale can cross zero only with `inventory.allow_negative`, a non-empty reason, zero reserved quantity, and a valid credential for a device assigned to the authenticated user/store |
+| Negative adjustment authorization | `docs/ATACK_PLUS_STOCK_ADJUSTMENT_REPAIR.sql` | Stock decrease crossing zero follows the same permission/reason/device contract |
+| Direct-write bypass prevention | `docs/PHASE3_REPAIR_011_NEGATIVE_STOCK_AUDIT.sql`, `docs/ATACK_PLUS_PHASE3_SECURITY_HARDENING.sql` | Authenticated users cannot directly INSERT/UPDATE/DELETE stock balances or movements; trusted RPCs continue to work |
+| D-016 end-to-end regression | `tests/phase3-negative-stock-policy-regression.sql` | Owner authorized sale/adjustment succeeds; seller without permission, missing reason/device, and revoked credential are rejected; operation replay creates no duplicate movement/audit |
+| Existing SQLite database upgrade | `docs/SQLITE_MIGRATION_PHASE3_NEGATIVE_STOCK.sql` | Stock table is rebuilt without the legacy non-negative CHECK; reserved quantity remains constrained; a negative balance requires a matching authorized movement in the same transaction |
+| SQLite local evidence regression | `tests/sqlite-stage3-warehouse-migration-regression.py` | Missing evidence is rejected; authorized movement followed by matching balance update succeeds; movement and adjustment evidence enters Change Log |
+
+**CI evidence:** SQL migration run [46154120813](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46154120813) PASS and Supabase Auth run [46154120793](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46154120793) PASS on commit `42c037a3e014008bd1a388d4c4ffbab71bad486c`.
+
+**Acceptance boundary:** SQLite proves the database transaction guard, not Flutter UI permission checks or restart recovery. The client must write the authorized movement first and update the balance with the same operation ID in one transaction; the server independently revalidates permission and device credentials on sync.
+
+---
+
 ## D3.2 — Delete Event Contract, Tombstone and Reliable Pull/ACK
 
 This section adds the integrated acceptance suite for the D3.2 server synchronization contract. It complements, and does not replace, the existing Stage 3 regression coverage.
