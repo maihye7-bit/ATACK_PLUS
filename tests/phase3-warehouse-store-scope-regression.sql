@@ -76,7 +76,7 @@ BEGIN
         INSERT INTO public.stock(product_id,store_id,location_id,quantity,reserved_quantity)
         VALUES(v_product_a,v_store_a,v_location_b,1,0);
         RAISE EXCEPTION 'Cross-store stock location unexpectedly accepted';
-    EXCEPTION WHEN foreign_key_violation THEN
+    EXCEPTION WHEN check_violation OR foreign_key_violation THEN
         NULL;
     END;
 
