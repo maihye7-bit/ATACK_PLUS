@@ -65,3 +65,23 @@ jobs:
 
       - name: Run real Auth and PostgREST integration smoke test
         run: bash tests/supabase-auth-smoke.sh
+
+      # Apply the approved D3.2 synchronization contract after the legacy
+      # Auth/business smoke has completed, then exercise the new API with real JWTs.
+      - name: Apply D3.2 sync hardening to Supabase Auth stack
+        run: |
+          set -euo pipefail
+          apply_sql() {
+            echo "Applying $1"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$1"
+          }
+          apply_sql docs/PHASE3_REPAIR_005_SYNC_PULL_RBAC.sql
+          apply_sql docs/PHASE3_REPAIR_006_DEVICE_CREDENTIAL_BINDING.sql
+          apply_sql docs/PHASE3_REPAIR_007_SYNC_DELIVERY_ACK.sql
+          apply_sql docs/PHASE3_REPAIR_008_TOMBSTONE_EVENT_CONTRACT.sql
+          apply_sql docs/PHASE3_REPAIR_009_TOMBSTONE_SYNC_STATE_SEMANTICS.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "NOTIFY pgrst, 'reload schema';"
+          sleep 3
+
+      - name: Run D3.2 real Auth and PostgREST synchronization regression
+        run: bash tests/supabase-d32-sync-auth-smoke.sh
