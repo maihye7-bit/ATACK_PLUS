@@ -4,9 +4,12 @@ INSERT INTO public.stores(id,name) VALUES
 ('a3000000-0000-4000-8000-000000000001','Stage3 Warehouse Store A'),
 ('a3000000-0000-4000-8000-000000000002','Stage3 Warehouse Store B');
 
-INSERT INTO public.users(id,store_id,username,full_name,is_active) VALUES
-('a3000000-0000-4000-8000-000000000011','a3000000-0000-4000-8000-000000000001','stage3_owner_a','Stage3 Owner A',TRUE),
-('a3000000-0000-4000-8000-000000000012','a3000000-0000-4000-8000-000000000002','stage3_owner_b','Stage3 Owner B',TRUE);
+INSERT INTO public.users(id,store_id,username,full_name,is_active,auth_user_id) VALUES
+('a3000000-0000-4000-8000-000000000011','a3000000-0000-4000-8000-000000000001','stage3_owner_a','Stage3 Owner A',TRUE,'a3000000-0000-4000-8000-000000000101'),
+('a3000000-0000-4000-8000-000000000012','a3000000-0000-4000-8000-000000000002','stage3_owner_b','Stage3 Owner B',TRUE,'a3000000-0000-4000-8000-000000000102');
+INSERT INTO public.user_roles(user_id,role_id) VALUES
+('a3000000-0000-4000-8000-000000000011','owner'),
+('a3000000-0000-4000-8000-000000000012','owner');
 
 INSERT INTO public.products(id,store_id,name,primary_unit_id,cost_price,default_sale_price,is_active) VALUES
 ('a3000000-0000-4000-8000-000000000021','a3000000-0000-4000-8000-000000000001','Stage3 Product A','pcs',10,15,TRUE),
