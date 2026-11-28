@@ -64,11 +64,11 @@ BEGIN
  SELECT c.app_user_id,c.already_processed INTO v_user,v_replay
   FROM public._claim_business_operation(p_store_id,p_operation_id,'stock_adjustment',v_id,p_payload,'inventory.adjust') c;
  IF v_replay THEN RETURN jsonb_build_object('success',TRUE,'replayed',TRUE,'adjustment_id',v_id); END IF;
+ v_location:=public.resolve_store_location_id(p_store_id,v_location);
 
  IF v_type NOT IN ('INCREASE','DECREASE') THEN RAISE EXCEPTION 'Invalid adjustment type'; END IF;
  IF v_reason IS NULL THEN RAISE EXCEPTION 'Reason for adjustment is required'; END IF;
  IF v_quantity IS NULL OR v_quantity<=0 THEN RAISE EXCEPTION 'Quantity must be positive'; END IF;
- IF NOT EXISTS(SELECT 1 FROM public.locations WHERE id=v_location) THEN RAISE EXCEPTION 'Stock location does not exist'; END IF;
 
  SELECT p.primary_unit_id,p.cost_price,
         CASE WHEN v_unit=p.primary_unit_id THEN 1 ELSE pu.conversion_factor END
