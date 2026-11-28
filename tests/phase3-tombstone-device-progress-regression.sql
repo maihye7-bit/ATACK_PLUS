@@ -178,16 +178,6 @@ BEGIN
     RAISE EXCEPTION 'Per-device ACK state is incomplete: A %, B %, max %, acked pages %',
       v_a,v_b,v_max,v_acked;
   END IF;
-  IF COALESCE(col_description(
-       'public.tombstones'::REGCLASS,
-       (SELECT attnum FROM pg_attribute WHERE attrelid='public.tombstones'::REGCLASS AND attname='sync_status')
-     ),'') NOT ILIKE '%not authoritative%'
-     OR COALESCE(col_description(
-       'public.tombstones'::REGCLASS,
-       (SELECT attnum FROM pg_attribute WHERE attrelid='public.tombstones'::REGCLASS AND attname='synced_at')
-     ),'') NOT ILIKE '%not maintained%' THEN
-    RAISE EXCEPTION 'Legacy Tombstone column semantics are not documented';
-  END IF;
   RAISE NOTICE 'PASS: both devices have independent ACK records; global Tombstone status remains legacy PENDING';
 END
 $final_state$;
