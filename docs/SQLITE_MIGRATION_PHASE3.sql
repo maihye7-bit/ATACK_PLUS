@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
     batch_number TEXT,
     expiry_date TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (return_id) REFERENCES purchase_returns(id) ON DELETE CASCADE,
-    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    FOREIGN KEY (return_id) REFERENCES purchase_returns(id) ON DELETE RESTRICT,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
     FOREIGN KEY (quantity_unit_id) REFERENCES units(id) ON DELETE RESTRICT
 );
 
