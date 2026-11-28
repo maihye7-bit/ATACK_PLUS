@@ -290,10 +290,11 @@ CREATE TABLE stock (
     product_id TEXT NOT NULL CHECK(length(product_id) = 36),
     store_id TEXT NOT NULL CHECK(length(store_id) = 36),
     location_id TEXT NOT NULL,
-    quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(quantity >= 0),
-    reserved_quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(reserved_quantity >= 0 AND reserved_quantity <= quantity),
+    quantity NUMERIC(18,4) NOT NULL DEFAULT 0,
+    reserved_quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(reserved_quantity >= 0 AND reserved_quantity <= MAX(quantity,0)),
     available_quantity NUMERIC(18,4) GENERATED ALWAYS AS (quantity - reserved_quantity) STORED,
     last_updated TEXT NOT NULL DEFAULT (datetime('now')),
+    last_operation_id TEXT,
     FOREIGN KEY (product_id,store_id) REFERENCES products(id,store_id) ON DELETE RESTRICT,
     FOREIGN KEY (location_id,store_id) REFERENCES locations(id,store_id) ON DELETE RESTRICT,
     CONSTRAINT unique_product_location UNIQUE (product_id, location_id)
@@ -340,9 +341,18 @@ CREATE TABLE stock_movements (
     expiry_date TEXT,
     reason TEXT,
     user_id TEXT NOT NULL CHECK(length(user_id) = 36),
+    operation_id TEXT,
+    device_id TEXT,
+    shortage_quantity NUMERIC(18,4) NOT NULL DEFAULT 0 CHECK(shortage_quantity >= 0),
+    negative_stock_authorized INTEGER NOT NULL DEFAULT 0 CHECK(negative_stock_authorized IN (0,1)),
     sync_status TEXT DEFAULT 'PENDING' CHECK(sync_status IN ('SYNCED', 'PENDING', 'ERROR', 'CONFLICT')),
     synced_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK(
+      (negative_stock_authorized=0 AND shortage_quantity=0)
+      OR (negative_stock_authorized=1 AND shortage_quantity>0
+          AND operation_id IS NOT NULL AND device_id IS NOT NULL AND length(trim(reason))>0)
+    ),
     FOREIGN KEY (product_id,store_id) REFERENCES products(id,store_id) ON DELETE RESTRICT,
     FOREIGN KEY (location_id,store_id) REFERENCES locations(id,store_id) ON DELETE RESTRICT,
     FOREIGN KEY (unit_id) REFERENCES units(id),
@@ -350,6 +360,35 @@ CREATE TABLE stock_movements (
 );
 
 CREATE INDEX idx_stock_movements_product ON stock_movements(product_id);
+
+-- Offline negative stock must be accompanied by a matching authorized movement
+-- written earlier in the same SQLite transaction. The server revalidates permission
+-- and device credentials when this operation is synchronized.
+CREATE TRIGGER trg_stock_negative_authorization_ins
+BEFORE INSERT ON stock
+WHEN NEW.quantity<0 AND NOT EXISTS (
+    SELECT 1 FROM stock_movements m
+     WHERE m.store_id=NEW.store_id AND m.product_id=NEW.product_id
+       AND m.location_id=NEW.location_id AND m.operation_id=NEW.last_operation_id
+       AND m.negative_stock_authorized=1 AND m.shortage_quantity>0
+       AND m.device_id IS NOT NULL AND length(trim(m.reason))>0
+)
+BEGIN
+    SELECT RAISE(ABORT,'Negative stock requires an authorized movement in the same transaction');
+END;
+
+CREATE TRIGGER trg_stock_negative_authorization_upd
+BEFORE UPDATE OF quantity,last_operation_id ON stock
+WHEN NEW.quantity<0 AND NOT EXISTS (
+    SELECT 1 FROM stock_movements m
+     WHERE m.store_id=NEW.store_id AND m.product_id=NEW.product_id
+       AND m.location_id=NEW.location_id AND m.operation_id=NEW.last_operation_id
+       AND m.negative_stock_authorized=1 AND m.shortage_quantity>0
+       AND m.device_id IS NOT NULL AND length(trim(m.reason))>0
+)
+BEGIN
+    SELECT RAISE(ABORT,'Negative stock requires an authorized movement in the same transaction');
+END;
 CREATE INDEX idx_stock_movements_date ON stock_movements(created_at);
 
 CREATE TRIGGER trg_stock_movements_store_location_ins
@@ -1488,7 +1527,7 @@ AFTER INSERT ON stock
 BEGIN
     INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
     VALUES ((SELECT store_id FROM products WHERE id = NEW.product_id), (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id = (SELECT store_id FROM products WHERE id = NEW.product_id)),
-            'stock', NEW.id, 'INSERT', NULL, json_object('id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated));
+            'stock', NEW.id, 'INSERT', NULL, json_object('id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated, 'last_operation_id', NEW.last_operation_id));
 END;
 CREATE TRIGGER trg_stock_log_update
 AFTER UPDATE ON stock
@@ -1496,14 +1535,14 @@ WHEN NEW.id IS NOT OLD.id OR NEW.store_id IS NOT OLD.store_id OR NEW.product_id 
 BEGIN
     INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
     VALUES ((SELECT store_id FROM products WHERE id = NEW.product_id), (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id = (SELECT store_id FROM products WHERE id = NEW.product_id)),
-            'stock', NEW.id, 'UPDATE', json_object('id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated), json_object('id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated));
+            'stock', NEW.id, 'UPDATE', json_object('id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated, 'last_operation_id', OLD.last_operation_id), json_object('id', NEW.id, 'store_id', NEW.store_id, 'product_id', NEW.product_id, 'location_id', NEW.location_id, 'quantity', NEW.quantity, 'reserved_quantity', NEW.reserved_quantity, 'last_updated', NEW.last_updated, 'last_operation_id', NEW.last_operation_id));
 END;
 CREATE TRIGGER trg_stock_log_delete
 AFTER DELETE ON stock
 BEGIN
     INSERT INTO change_log (store_id, sync_cursor, table_name, record_uuid, operation, old_values_json, new_values_json)
     VALUES ((SELECT store_id FROM products WHERE id = OLD.product_id), (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id = (SELECT store_id FROM products WHERE id = OLD.product_id)),
-            'stock', OLD.id, 'DELETE', json_object('id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated), NULL);
+            'stock', OLD.id, 'DELETE', json_object('id', OLD.id, 'store_id', OLD.store_id, 'product_id', OLD.product_id, 'location_id', OLD.location_id, 'quantity', OLD.quantity, 'reserved_quantity', OLD.reserved_quantity, 'last_updated', OLD.last_updated, 'last_operation_id', OLD.last_operation_id), NULL);
 END;
 CREATE TRIGGER trg_purchases_log_insert
 AFTER INSERT ON purchases
