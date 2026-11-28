@@ -301,6 +301,90 @@ Phase 3 tables integrate with existing sync system:
 3. `change_log` triggers fire automatically via `trg_log_change()`
 4. Sync cursors work via `store_sync_counters`
 
+## D3.2 Authenticated Sync API (current contract)
+
+The authenticated mobile/desktop client must use the device-credential and delivery-page RPCs below. The older cursor-only Pull/ACK RPC overloads and the credential-only Pull/ACK overloads are not executable by `authenticated`; they remain only for trusted service-role paths.
+
+### Device lifecycle
+
+- `register_sync_device(p_target_user_id, p_device_name, p_device_type)`: owner with `sync.manage` registers a device for an active user in the same store. The response contains `device_id` and a one-time `device_token`.
+- `rotate_sync_device_credential(p_device_id)`: owner rotates the credential. The previous token becomes invalid and any unacknowledged delivery issued under its old credential version must be pulled again.
+- `revoke_sync_device(p_device_id)`: owner revokes the device credential. A revoked device cannot Pull or ACK.
+
+Store the raw device token only in the platform secure credential store (Android Keystore / Windows protected credential storage). Never write it to logs, analytics, ordinary preferences, crash reports or Outbox payloads.
+
+### Pull page
+
+Call:
+
+```text
+get_unsynced_records_page(
+  p_store_id,
+  p_device_id,
+  p_table_name,
+  p_device_token
+)
+```
+
+The client does not send a cursor. The server owns the per-device/per-table checkpoint and returns a page shaped like:
+
+```json
+{
+  "delivery_id": "server-issued-page-uuid",
+  "table_name": "invoices",
+  "event_count": 1,
+  "has_more": false,
+  "page_hash": "sha256-hex",
+  "events": [
+    {
+      "event_type": "UPDATE",
+      "table_name": "invoices",
+      "record_uuid": "invoice-uuid",
+      "operation": "UPDATE",
+      "tombstone_id": null,
+      "record_json": {},
+      "sync_cursor": 123,
+      "changed_at": "timestamp"
+    }
+  ]
+}
+```
+
+The fixed page limit is 500 visible events. `has_more` refers only to events the user is authorized to receive. An empty response has `event_count = 0`, `has_more = false`, `delivery_id = null`, and `events = []`; hidden event counts and cursor values are not exposed.
+
+### ACK page
+
+Call:
+
+```text
+acknowledge_sync_cursor(
+  p_store_id,
+  p_device_id,
+  p_table_name,
+  p_delivery_id,
+  p_device_token
+)
+```
+
+The client must:
+1. Apply the entire page inside one local database transaction.
+2. Persist the Delivery ID in that same local transaction.
+3. Commit successfully.
+4. Only then send ACK.
+5. Request the next page only after ACK succeeds.
+
+If local application fails, do not ACK. If the local commit succeeds but the ACK response is lost, retry the same Delivery ID; the server ACK is idempotent. The server proves that it issued the page to the device; it cannot independently prove that the client committed the local transaction.
+
+### Canonical Tombstone event
+
+A Tombstone INSERT is returned as a logical DELETE:
+- `event_type = DELETE` and `operation = DELETE`.
+- `table_name` and `record_uuid` identify the original entity.
+- `tombstone_id` identifies the Tombstone row and is distinct from the original `record_uuid`.
+- `store_id`, `deleted_at` and `deleted_by` are included in `record_json`.
+
+The client must reconcile by `store_id + table_name + record_uuid`, keep `tombstone_id` separately, and never let a stale UPDATE reactivate a tombstoned entity. Pull streams remain per-table; Tombstone is the authoritative delete signal when cross-table delivery order differs.
+
 ## Flutter Integration Example
 
 ```dart
