@@ -1024,15 +1024,13 @@ BEGIN
         SELECT store_id INTO v_store_id FROM public.invoices
         WHERE id = (v_row->>'original_invoice_id')::UUID;
     ELSIF TG_TABLE_NAME = 'purchase_return_items' AND v_row ? 'return_id' THEN
-        SELECT p.store_id INTO v_store_id
-        FROM public.purchase_returns pr
-        JOIN public.purchases p ON p.id = pr.original_purchase_id
-        WHERE pr.id = (v_row->>'return_id')::UUID;
+        SELECT store_id INTO v_store_id
+        FROM public.purchase_returns
+        WHERE id = (v_row->>'return_id')::UUID;
     ELSIF TG_TABLE_NAME = 'return_items' AND v_row ? 'return_id' THEN
-        SELECT i.store_id INTO v_store_id
-        FROM public.sales_returns r
-        JOIN public.invoices i ON i.id = r.original_invoice_id
-        WHERE r.id = (v_row->>'return_id')::UUID;
+        SELECT store_id INTO v_store_id
+        FROM public.sales_returns
+        WHERE id = (v_row->>'return_id')::UUID;
     ELSIF v_row ? 'product_id' THEN
         SELECT store_id INTO v_store_id FROM public.products
         WHERE id = (v_row->>'product_id')::UUID;
@@ -1041,10 +1039,9 @@ BEGIN
     END IF;
 
     IF v_store_id IS NULL THEN
-        IF TG_OP = 'DELETE' THEN
-            RETURN OLD;
-        END IF;
-        RAISE EXCEPTION 'Cannot resolve store for change-log row in %', TG_TABLE_NAME;
+        -- Never allow a DELETE to commit without its own Change Log event.
+        -- If ownership cannot be resolved, fail the statement and roll back atomically.
+        RAISE EXCEPTION 'Cannot resolve store for change-log row in %',TG_TABLE_NAME;
     END IF;
 
     v_record_id := (v_row->>'id')::UUID;
