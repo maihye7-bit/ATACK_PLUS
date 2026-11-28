@@ -8,6 +8,7 @@ DECLARE
     v_location_b TEXT;
     v_new_store UUID := 'a3000000-0000-4000-8000-000000000003';
     v_custom_location TEXT;
+    v_default_rejected BOOLEAN := FALSE;
 BEGIN
     IF (SELECT COUNT(*) FROM public.locations WHERE store_id IN (v_store_a,v_store_b)) <> 6 THEN
         RAISE EXCEPTION 'Each legacy store must receive exactly three locations';
@@ -87,10 +88,12 @@ BEGIN
     END IF;
     BEGIN
         PERFORM public.deactivate_store_location(v_store_a,v_location_a);
-        RAISE EXCEPTION 'Default warehouse was deactivated without replacement';
     EXCEPTION WHEN raise_exception THEN
-        NULL;
+        v_default_rejected := TRUE;
     END;
+    IF NOT v_default_rejected THEN
+        RAISE EXCEPTION 'Default warehouse was deactivated without replacement';
+    END IF;
 
     -- Product/store and location/store pairs are both enforced by composite FKs.
     BEGIN
