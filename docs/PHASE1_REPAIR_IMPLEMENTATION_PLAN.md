@@ -928,7 +928,12 @@ Added `tests/phase3-sync-pull-rbac-regression.sql` with two sellers and one owne
 
 The SQL migration and regression were added to `.github/workflows/sql-migrations-smoke.yml` after owner/seller role consolidation. The workflow uses only its disposable PostgreSQL 16 service.
 
-**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+**CI evidence**
+- SQL migration smoke test: [run 46129696479](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46129696479) — completed / success on commit `c1fde108a302cfc38c9e69768dbfe75ffbb4e002`.
+- Job `140931928555`: migration step and R1 regression step both completed / success.
+- Regression notices: `PASS: seller Pull is restricted to own sales chain, shared products and authorized tombstones`; `PASS: owner Pull retains store-wide visibility`.
+- The workflow also completed the existing SQL migration, RBAC, role-matrix, FK and Change Log regression steps successfully.
+- This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 #### C. Boundaries and remaining D3.2 work
 
