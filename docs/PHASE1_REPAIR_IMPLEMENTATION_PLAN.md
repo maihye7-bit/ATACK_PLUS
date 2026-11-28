@@ -1023,6 +1023,11 @@ Added `tests/phase3-sync-delivery-ack-regression.sql` and appended R3 migration/
 - Hidden purchase events are not returned and do not leak `has_more`, counts, cursor values or delivery IDs; the invisible range is checkpointed safely.
 - Direct access to the private delivery ledger is denied.
 
-**CI evidence:** pending the workflow run for the implementation commit. No test is reported as passed until the workflow completes successfully and its logs are inspected.
+**CI evidence**
+- SQL migration smoke test: [run 46131913921](https://github.com/maihye7-bit/ATACK_PLUS/actions/runs/46131913921) — completed / success on commit `e4e70d86372b12bbc5cf451334b341c59cc578a3`.
+- Job `140938739380`: R1 Pull RBAC, R2 device credential binding and R3 delivery-bound ACK migration/regression steps all completed / success.
+- R3 regression notices confirm replay-stable page issuance, fabricated and cross-device ACK rejection, idempotent ACK, 1,201 events delivered across sequential pages without gaps/duplicates, and hidden-only stream checkpointing without metadata disclosure.
+- Existing SQL migration, FK, Change Log, RBAC and security regression steps also completed successfully.
+- This is isolated PostgreSQL 16 CI evidence, not staging/production acceptance.
 
 No local, staging or production database was touched; no merge to `main` was performed.
