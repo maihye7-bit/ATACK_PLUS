@@ -86,7 +86,7 @@ BEGIN
         VALUES(v_product_a,v_store_a,v_location_b,'IN',1,'pcs',10,10,
             'a3000000-0000-4000-8000-000000000011');
         RAISE EXCEPTION 'Cross-store stock movement location unexpectedly accepted';
-    EXCEPTION WHEN foreign_key_violation THEN
+    EXCEPTION WHEN check_violation OR foreign_key_violation THEN
         NULL;
     END;
 END
