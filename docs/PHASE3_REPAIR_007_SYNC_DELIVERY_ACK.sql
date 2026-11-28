@@ -106,13 +106,20 @@ BEGIN
         RAISE EXCEPTION 'Device authentication failed';
     END IF;
 
-    SELECT COALESCE(sc.last_pull_seq, 0)
+    -- Serialize Pull/ACK for one device/table and keep lock order consistent:
+    -- credential -> sync cursor -> delivery page.
+    INSERT INTO public.sync_cursors(
+        store_id, device_id, table_name, last_pull_seq, cursor_value
+    ) VALUES (p_store_id, p_device_id, p_table_name, 0, '0')
+    ON CONFLICT (store_id, device_id, table_name) DO NOTHING;
+
+    SELECT sc.last_pull_seq
       INTO v_cursor_after
-      FROM (SELECT 1) seed
-      LEFT JOIN public.sync_cursors sc
-        ON sc.store_id = p_store_id
+      FROM public.sync_cursors sc
+     WHERE sc.store_id = p_store_id
        AND sc.device_id = p_device_id
-       AND sc.table_name = p_table_name;
+       AND sc.table_name = p_table_name
+     FOR UPDATE;
 
     -- Select at most 501 visible rows. Hidden rows never affect has_more or the
     -- event count returned to the caller. If <=500 visible rows exist, the
@@ -283,6 +290,20 @@ BEGIN
         RAISE EXCEPTION 'Device authentication failed';
     END IF;
 
+    -- Lock the cursor before the delivery row, matching Pull's lock order.
+    INSERT INTO public.sync_cursors(
+        store_id, device_id, table_name, last_pull_seq, cursor_value
+    ) VALUES (p_store_id, p_device_id, p_table_name, 0, '0')
+    ON CONFLICT (store_id, device_id, table_name) DO NOTHING;
+
+    SELECT sc.last_pull_seq
+      INTO v_current_cursor
+      FROM public.sync_cursors sc
+     WHERE sc.store_id = p_store_id
+       AND sc.device_id = p_device_id
+       AND sc.table_name = p_table_name
+     FOR UPDATE;
+
     SELECT dp.*
       INTO v_page
       FROM public.sync_delivery_pages dp
@@ -305,14 +326,6 @@ BEGIN
         END IF;
         RAISE EXCEPTION 'Delivery page was acknowledged with a different cursor';
     END IF;
-
-    SELECT COALESCE(sc.last_pull_seq, 0)
-      INTO v_current_cursor
-      FROM (SELECT 1) seed
-      LEFT JOIN public.sync_cursors sc
-        ON sc.store_id = p_store_id
-       AND sc.device_id = p_device_id
-       AND sc.table_name = p_table_name;
 
     IF v_page.cursor_after <> v_current_cursor THEN
         RAISE EXCEPTION 'Delivery page is out of order for this device';
