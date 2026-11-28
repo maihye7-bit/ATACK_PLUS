@@ -876,3 +876,25 @@ Part 3-D2 migration code and its disposable-CI regression are complete. This doe
 - The nine lifecycle exclusions remain a separate store/user/device/sync lifecycle decision; their presence is not permission to physically purge those entities.
 
 The next planned work is Part 3-D3 (Change Log child-delete event semantics and sync contract), which requires its own approval before code changes.
+
+
+### 19.10 Part 3-D3.1 — Change Log ownership and child DELETE hardening
+
+**Status:** Implemented on `repair/verified-fixes`; isolated PostgreSQL CI validation is pending the workflow run for this commit. No persistent database has been modified.
+
+#### A. Function definitions and migration order
+
+Both definitions of `public.trg_log_change()` were updated: the base schema definition and the later override in `ATACK_PLUS_PHASE3_RETURNS_INVENTORY_ACCOUNTING.sql`. This keeps the base definition fail-closed if used independently and preserves the intended final implementation after the repository SQL application order.
+
+- An unresolved `store_id` now raises an exception for INSERT, UPDATE and DELETE. The silent DELETE return was removed; an unresolved ownership identity or failed Change Log write aborts the source statement atomically.
+- The base definition resolves `return_items` directly from `sales_returns.store_id`.
+- The final override resolves `return_items` directly from `sales_returns.store_id` and `purchase_return_items` directly from `purchase_returns.store_id`; the unnecessary joins to invoices/purchases were removed.
+- The transactional `log_change()` / `get_next_change_cursor()` path was not changed. D2's 16 RESTRICT constraints and nine lifecycle exclusions were not changed.
+
+#### B. Regression coverage
+
+Added `tests/phase2-change-log-child-delete-regression.sql` and a CI step after the D2 FK regression. The disposable PostgreSQL 16 test exercises DELETE events for all 11 parent-derived child tables, a store-owned category DELETE caused by the permitted store lifecycle cascade, atomic rollback when Change Log insertion fails, and catalog coverage for all 34 synchronized tables with enabled AFTER ROW INSERT/UPDATE/DELETE triggers bound to the effective function.
+
+#### C. Boundaries
+
+Pull/ACK semantics, pagination, client reconciliation, generic Outbox behavior, and store/user/device lifecycle policy are unchanged and remain later D3 work. CI results will be appended after the workflow run. No persistent local/staging/production database execution and no merge to `main` are included.
