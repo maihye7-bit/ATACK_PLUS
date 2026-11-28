@@ -234,6 +234,16 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-sync-pull-rbac-regression.sql"
+
+      # D3.2 / R2: authenticate the assigned device for every authenticated sync RPC.
+      - name: Apply D3.2 device credential binding
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "docs/PHASE3_REPAIR_006_DEVICE_CREDENTIAL_BINDING.sql"
+      - name: Run D3.2 device credential regression
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d atack_plus_test -v ON_ERROR_STOP=1 -f "tests/phase3-device-credential-regression.sql"
       - name: Verify repaired SQL contracts
         env:
           PGPASSWORD: postgres
