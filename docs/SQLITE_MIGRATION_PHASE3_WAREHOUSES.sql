@@ -147,6 +147,92 @@ BEGIN
     SELECT RAISE(ABORT,'Stock adjustment product/location must belong to the same store and active warehouse');
 END;
 
+-- Replace legacy stock Change Log triggers so every inventory event carries
+-- its authoritative store_id directly (not a reconstructed global location code).
+DROP TRIGGER IF EXISTS trg_stock_log_insert;
+DROP TRIGGER IF EXISTS trg_stock_log_update;
+DROP TRIGGER IF EXISTS trg_stock_log_delete;
+CREATE TRIGGER trg_stock_log_insert AFTER INSERT ON stock
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,new_values_json)
+    VALUES(NEW.store_id,(SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+           'stock',NEW.id,'INSERT',
+           json_object('id',NEW.id,'store_id',NEW.store_id,'product_id',NEW.product_id,
+                       'location_id',NEW.location_id,'quantity',NEW.quantity,
+                       'reserved_quantity',NEW.reserved_quantity,'last_updated',NEW.last_updated));
+END;
+CREATE TRIGGER trg_stock_log_update AFTER UPDATE ON stock
+WHEN NEW.id IS NOT OLD.id OR NEW.store_id IS NOT OLD.store_id OR NEW.product_id IS NOT OLD.product_id
+  OR NEW.location_id IS NOT OLD.location_id OR NEW.quantity IS NOT OLD.quantity
+  OR NEW.reserved_quantity IS NOT OLD.reserved_quantity
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json,new_values_json)
+    VALUES(NEW.store_id,(SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+           'stock',NEW.id,'UPDATE',
+           json_object('id',OLD.id,'store_id',OLD.store_id,'product_id',OLD.product_id,
+                       'location_id',OLD.location_id,'quantity',OLD.quantity,
+                       'reserved_quantity',OLD.reserved_quantity,'last_updated',OLD.last_updated),
+           json_object('id',NEW.id,'store_id',NEW.store_id,'product_id',NEW.product_id,
+                       'location_id',NEW.location_id,'quantity',NEW.quantity,
+                       'reserved_quantity',NEW.reserved_quantity,'last_updated',NEW.last_updated));
+END;
+CREATE TRIGGER trg_stock_log_delete AFTER DELETE ON stock
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json)
+    VALUES(OLD.store_id,(SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=OLD.store_id),
+           'stock',OLD.id,'DELETE',
+           json_object('id',OLD.id,'store_id',OLD.store_id,'product_id',OLD.product_id,
+                       'location_id',OLD.location_id,'quantity',OLD.quantity,
+                       'reserved_quantity',OLD.reserved_quantity,'last_updated',OLD.last_updated));
+END;
+
+DROP TRIGGER IF EXISTS trg_stock_movements_log_change;
+DROP TRIGGER IF EXISTS trg_stock_movements_log_change_upd;
+DROP TRIGGER IF EXISTS trg_stock_movements_log_change_del;
+CREATE TRIGGER trg_stock_movements_log_change AFTER INSERT ON stock_movements
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,new_values_json)
+    VALUES(NEW.store_id,(SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+           'stock_movements',NEW.id,'INSERT',
+           json_object('id',NEW.id,'store_id',NEW.store_id,'product_id',NEW.product_id,
+                       'location_id',NEW.location_id,'type',NEW.type,'quantity',NEW.quantity,
+                       'unit_id',NEW.unit_id,'cost_per_unit',NEW.cost_per_unit,'total_value',NEW.total_value,
+                       'reference_id',NEW.reference_id,'reference_type',NEW.reference_type,
+                       'user_id',NEW.user_id,'created_at',NEW.created_at));
+END;
+CREATE TRIGGER trg_stock_movements_log_change_upd AFTER UPDATE ON stock_movements
+WHEN NEW.id IS NOT OLD.id OR NEW.store_id IS NOT OLD.store_id OR NEW.product_id IS NOT OLD.product_id
+  OR NEW.location_id IS NOT OLD.location_id OR NEW.type IS NOT OLD.type OR NEW.quantity IS NOT OLD.quantity
+  OR NEW.unit_id IS NOT OLD.unit_id OR NEW.cost_per_unit IS NOT OLD.cost_per_unit
+  OR NEW.total_value IS NOT OLD.total_value OR NEW.reference_id IS NOT OLD.reference_id
+  OR NEW.reference_type IS NOT OLD.reference_type OR NEW.user_id IS NOT OLD.user_id
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json,new_values_json)
+    VALUES(NEW.store_id,(SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=NEW.store_id),
+           'stock_movements',NEW.id,'UPDATE',
+           json_object('id',OLD.id,'store_id',OLD.store_id,'product_id',OLD.product_id,
+                       'location_id',OLD.location_id,'type',OLD.type,'quantity',OLD.quantity,
+                       'unit_id',OLD.unit_id,'cost_per_unit',OLD.cost_per_unit,'total_value',OLD.total_value,
+                       'reference_id',OLD.reference_id,'reference_type',OLD.reference_type,
+                       'user_id',OLD.user_id,'created_at',OLD.created_at),
+           json_object('id',NEW.id,'store_id',NEW.store_id,'product_id',NEW.product_id,
+                       'location_id',NEW.location_id,'type',NEW.type,'quantity',NEW.quantity,
+                       'unit_id',NEW.unit_id,'cost_per_unit',NEW.cost_per_unit,'total_value',NEW.total_value,
+                       'reference_id',NEW.reference_id,'reference_type',NEW.reference_type,
+                       'user_id',NEW.user_id,'created_at',NEW.created_at));
+END;
+CREATE TRIGGER trg_stock_movements_log_change_del AFTER DELETE ON stock_movements
+BEGIN
+    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json)
+    VALUES(OLD.store_id,(SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=OLD.store_id),
+           'stock_movements',OLD.id,'DELETE',
+           json_object('id',OLD.id,'store_id',OLD.store_id,'product_id',OLD.product_id,
+                       'location_id',OLD.location_id,'type',OLD.type,'quantity',OLD.quantity,
+                       'unit_id',OLD.unit_id,'cost_per_unit',OLD.cost_per_unit,'total_value',OLD.total_value,
+                       'reference_id',OLD.reference_id,'reference_type',OLD.reference_type,
+                       'user_id',OLD.user_id,'created_at',OLD.created_at));
+END;
+
 -- Locations are server-owned reference data and are pulled by each registered device.
 CREATE TRIGGER trg_locations_log_insert
 AFTER INSERT ON locations
@@ -176,18 +262,6 @@ BEGIN
            json_object('id',NEW.id,'store_id',NEW.store_id,'code',NEW.code,'name',NEW.name,
                        'is_default',NEW.is_default,'is_active',NEW.is_active,
                        'created_at',NEW.created_at,'updated_at',NEW.updated_at));
-END;
-
-CREATE TRIGGER trg_locations_log_delete
-AFTER DELETE ON locations
-BEGIN
-    INSERT INTO change_log(store_id,sync_cursor,table_name,record_uuid,operation,old_values_json)
-    VALUES(OLD.store_id,
-           (SELECT COALESCE(MAX(sync_cursor),0)+1 FROM change_log WHERE store_id=OLD.store_id),
-           'locations',OLD.id,'DELETE',
-           json_object('id',OLD.id,'store_id',OLD.store_id,'code',OLD.code,'name',OLD.name,
-                       'is_default',OLD.is_default,'is_active',OLD.is_active,
-                       'created_at',OLD.created_at,'updated_at',OLD.updated_at));
 END;
 
 DROP TABLE stage3_location_map;
